@@ -4,8 +4,7 @@ import numpy as np
 import plotly.graph_objects as go
 import base64
 from streamlit_sortables import sort_items
-from streamlit_option_menu import option_menu
-
+from mat import MATERIAL_KEYS
 st.set_page_config(layout="wide", page_title="Meep Web GUI")
 
 st.markdown("""
@@ -81,13 +80,45 @@ def get_mesh(sx, sy, sz, nx, ny, nz):
     return x.flatten(), y.flatten(), z.flatten()
 
 
+@st.dialog("Source configuration",width = 'medium')
+def src_cfg():
+    src_left,src_right = st.columns(2)
+    with src_left:
+        st.write("General parameters")
+        temp_src_type = st.selectbox("Type", ["Custom", "Eigenmode","Gaussian"],index=None)
+        temp_src_comp = st.selectbox("Component", ["Ex", "Ey", "Ez", "Hx", "Hy", "Hz"],index=None,key='t_src_comp')
+        x,y,z = st.columns(3)
+        temp_src_center =[None]*3
+        temp_src_center[0]= x.number_input("Center",label_visibility ='visible',placeholder="X",value=None)
+        temp_src_center[1]= y.number_input("Center",label_visibility ='hidden',placeholder="Y",value=None)
+        temp_src_center[2]= z.number_input("Center",label_visibility ='hidden',placeholder="Z",value=None)
+        x1,y1,z1 = st.columns(3)
+        temp_src_size = [None]*3
+        temp_src_size[0]= x1.number_input("Size",label_visibility ='visible',placeholder="X",value=None)
+        temp_src_size[1]= y1.number_input("Size",label_visibility ='hidden',placeholder="Y",value=None)
+        temp_src_size[2]= z1.number_input("Size",label_visibility ='hidden',placeholder="Z",value=None)
+        with st.expander("Amplitude parameters"):
+            temp_src_amp = st.text_input("Amplitude",placeholder="1.0")
+            if st.checkbox("Advanced setup",key='t_src_amp_adv'):
+                temp_src_amp_set = st.radio("Amplitude defined by:",["function","file","data"],horizontal=True)
+                if temp_src_amp_set == "function":
+                    st.write("function")
+                if temp_src_amp_set == "file":
+                    st.write("file")
+                if temp_src_amp_set == "data":
+                    st.write("data")
+    with src_right:
+        pass
+
+
+
 @st.dialog("Geometry configuration",width = 'medium')
 def add_geometry(old_cfg=None):
     geo_left, geo_right = st.columns(2)
     with geo_left:
         st.write("General parameters")
-        temp_geo_type = st.selectbox("Type", ["Block", "Sphere", "Cylinder","Prism"],index=None,key="tg_type")
-        temp_geo_mat = st.selectbox("Material", ["User defined (Epsilon)", "Si", "SiO2", "Ag", "Au"],index=None,key="tg_mat")
+        temp_geo_type = st.selectbox("Type", ["Block", "Sphere", "Cylinder","Prism"],index=None)
+        temp_geo_mat = st.selectbox("Material", MATERIAL_KEYS,index=None)
         x,y,z = st.columns(3)
         temp_geo_center = [None]*3
         temp_geo_center[0]= x.number_input("Center",label_visibility ='visible',placeholder="X",value=None,key="tg_cx")
@@ -245,7 +276,7 @@ with st.sidebar:
 
 
     if st.session_state.active_page == "geometry":
-        if st.button("Add Geometry", type="primary", width='stretch'):
+        if st.button("Add geometry", type="primary", width='stretch'):
             add_geometry()
 
         with st.expander("Geometry list", expanded=True):
@@ -260,7 +291,8 @@ with st.sidebar:
                 st.info("No geometries added yet.")
 
     if st.session_state.active_page == "source":
-        pass
+        if st.button("Add source",type="primary", width='stretch'):
+            src_cfg()
     if st.session_state.active_page == "monitor":
         pass
 
