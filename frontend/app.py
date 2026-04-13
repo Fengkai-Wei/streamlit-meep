@@ -10,7 +10,7 @@ st.set_page_config(layout="wide", page_title="Meep Web GUI")
 
 st.markdown("""
     <style>
-[data-testid="stSidebarHeader"] {
+        [data-testid="stSidebarHeader"] {
             padding-top: 0.2rem !important;
             padding-bottom: 0rem !important;
             min-height: auto !important;
@@ -44,7 +44,7 @@ st.markdown("""
             color: #31333F;
             border: none;
             text-align: left;
-            padding-left: 1rem;
+            padding-left: 0.5rem;
             transition: all 0.2s ease;
         }
 
@@ -68,6 +68,7 @@ st.markdown("""
 # --- 状态初始化 ---
 if "geoms" not in st.session_state: st.session_state.geoms = []
 if "sources" not in st.session_state: st.session_state.sources = []
+if "monitors" not in st.session_state: st.session_state.monitors = []
 if "results" not in st.session_state: st.session_state.results = None
 if "active_page" not in st.session_state: st.session_state.active_page = "simulation"
 
@@ -81,83 +82,120 @@ def get_mesh(sx, sy, sz, nx, ny, nz):
 
 
 @st.dialog("Geometry configuration",width = 'medium')
-def add_geometry():
+def add_geometry(old_cfg=None):
     geo_left, geo_right = st.columns(2)
     with geo_left:
         st.write("General parameters")
-        temp_geo_type = st.selectbox("Type", ["Block", "Sphere", "Cylinder","Prism"],index=None)
-        temp_geo_mat = st.selectbox("Material", ["User defined (Epsilon)", "Si", "SiO2", "Ag", "Au"],index=None)
+        temp_geo_type = st.selectbox("Type", ["Block", "Sphere", "Cylinder","Prism"],index=None,key="tg_type")
+        temp_geo_mat = st.selectbox("Material", ["User defined (Epsilon)", "Si", "SiO2", "Ag", "Au"],index=None,key="tg_mat")
         x,y,z = st.columns(3)
         temp_geo_center = [None]*3
-        temp_geo_center[0]= x.number_input("Center",label_visibility ='visible',placeholder="X",value=None)
-        temp_geo_center[1]= y.number_input("Center",label_visibility ='hidden',placeholder="Y",value=None)
-        temp_geo_center[2]= z.number_input("Center",label_visibility ='hidden',placeholder="Z",value=None)
+        temp_geo_center[0]= x.number_input("Center",label_visibility ='visible',placeholder="X",value=None,key="tg_cx")
+        temp_geo_center[1]= y.number_input("Center",label_visibility ='hidden',placeholder="Y",value=None,key="tg_cy")
+        temp_geo_center[2]= z.number_input("Center",label_visibility ='hidden',placeholder="Z",value=None,key="tg_cz")
         
-        if st.button("Confirm",type="primary", width='stretch'):
-            pass
+        if st.button("Confirm", type="primary", width='stretch'):
+            st.write(f"{temp_geo_type} with {temp_geo_mat} at {temp_geo_center} added.")
+            if temp_geo_type == "Sphere":
+                st.write(f"Radius: {st.session_state.get('t_sphere_r')}")
+            if temp_geo_type == "Block":
+                st.write(f"Size: ({st.session_state.get('t_block_sx')}, {st.session_state.get('t_block_sy')}, {st.session_state.get('t_block_sz')})")
+                st.write(f"E1: {st.session_state.get('t_block_e1x')}, {st.session_state.get('t_block_e1y')}, {st.session_state.get('t_block_e1z')}")
+                st.write(f"E2: {st.session_state.get('t_block_e2x')}, {st.session_state.get('t_block_e2y')}, {st.session_state.get('t_block_e2z')}")
+                st.write(f"E3: {st.session_state.get('t_block_e3x')}, {st.session_state.get('t_block_e3y')}, {st.session_state.get('t_block_e3z')}")
+                st.write(f"Make it Ellipsoid: {st.session_state.get('t_block_ellipsoid')}")
+            if temp_geo_type == "Cylinder":
+                st.write(f"Radius: {st.session_state.get('t_cylinder_r')}")
+                st.write(f"Height: {st.session_state.get('t_cylinder_h')}")
+                st.write(f"Axis: ({st.session_state.get('t_cylinder_axis_x')}, {st.session_state.get('t_cylinder_axis_y')}, {st.session_state.get('t_cylinder_axis_z')})")
+                if st.session_state.get("t_cylinder_subclass"):
+                    st.write(f"Subclass type: {st.session_state.get('t_cylinder_subclass_type')}")
+                    if st.session_state.get('t_cylinder_subclass_type') == "Cone":
+                        st.write(f"Top radius: {st.session_state.get('t_cylinder_radius2')}")
+                    if st.session_state.get('t_cylinder_subclass_type') == "Wedge":
+                        st.write(f"Wedge angle: {st.session_state.get('t_cylinder_wedge_angle')}")
+                        st.write(f"Wedge vector:({st.session_state.get('t_cylinder_wedge_x')}, {st.session_state.get('t_cylinder_wedge_y')}, {st.session_state.get('t_cylinder_wedge_z')})")
+
+            if temp_geo_type == "Prism":
+                st.write(f"Vertices: {st.session_state.get('t_prism_vertices')}")
+                st.write(f"Height: {st.session_state.get('t_prism_h')}")
+                st.write(f"Axis: ({st.session_state.get('t_prism_axis_x')}, {st.session_state.get('t_prism_axis_y')}, {st.session_state.get('t_prism_axis_z')})")
+                if st.session_state.get('t_prism_center_checkbox'):
+                    st.write(f"Shift center: ({st.session_state.get('t_prism_center_x')}, {st.session_state.get('t_prism_center_y')}, {st.session_state.get('t_prism_center_z')})")
+                st.write(f"Sidewall angle: {st.session_state.get('t_prism_sidewall_angle')}")
+
 
     with geo_right:
         st.write("Type parameters")
         if temp_geo_type == None:
             st.error("Please specify geometry type.")
         else:
-
             if temp_geo_type == "Sphere":
-                temp_radius = st.number_input("Radius", value=None)
+                temp_radius = st.number_input("Radius", value=None,key="t_sphere_r")
             elif temp_geo_type == "Block":
                 size_x,size_y,size_z= st.columns(3)
-                temp_sx = size_x.number_input("Size",label_visibility ='visible',placeholder="Size X",value=None)
-                temp_sy = size_y.number_input("Size",label_visibility ='hidden',placeholder="Size Y",value=None)
-                temp_sz = size_z.number_input("Size",label_visibility ='hidden',placeholder="Size Z",value=None)
+                temp_s = [None]*3
+                temp_s[0] = size_x.number_input("Size",label_visibility ='visible',placeholder="Size X",value=None,key="t_block_sx")
+                temp_s[1] = size_y.number_input("Size",label_visibility ='hidden',placeholder="Size Y",value=None,key="t_block_sy")
+                temp_s[2] = size_z.number_input("Size",label_visibility ='hidden',placeholder="Size Z",value=None,key="t_block_sz")
                 with st.expander("Block axes", expanded=False):
                     axes_x,axes_y,axes_z = st.columns(3)
-                    temp_e1_x = axes_x.number_input(r"$\vec{e_1}$",label_visibility ='visible',placeholder="X",value=1.0)
-                    temp_e1_y = axes_y.number_input(r"$\vec{e_1}$",label_visibility ='hidden',placeholder="Y",value=0.0)
-                    temp_e1_z = axes_z.number_input(r"$\vec{e_1}$",label_visibility ='hidden',placeholder="Z",value=0.0)
-                    temp_e2_x = axes_x.number_input(r"$\vec{e_2}$",label_visibility ='visible',placeholder="X",value=0.0)
-                    temp_e2_y = axes_y.number_input(r"$\vec{e_2}$",label_visibility ='hidden',placeholder="Y",value=1.0)
-                    temp_e2_z = axes_z.number_input(r"$\vec{e_2}$",label_visibility ='hidden',placeholder="Z",value=0.0)
-                    temp_e3_x = axes_x.number_input(r"$\vec{e_3}$",label_visibility ='visible',placeholder="X",value=0.0)
-                    temp_e3_y = axes_y.number_input(r"$\vec{e_3}$",label_visibility ='hidden',placeholder="Y",value=0.0)
-                    temp_e3_z = axes_z.number_input(r"$\vec{e_3}$",label_visibility ='hidden',placeholder="Z",value=1.0)
-                ellipsoid = st.checkbox("Make it Ellipsoid", value=False)
+                    temp_e1 = [None]*3
+                    temp_e2 = [None]*3
+                    temp_e3 = [None]*3
+                    temp_e1[0] = axes_x.number_input(r"$\vec{e_1}$",label_visibility ='visible',placeholder="X",value=1.0,key="t_block_e1x")
+                    temp_e1[1] = axes_y.number_input(r"$\vec{e_1}$",label_visibility ='hidden',placeholder="Y",value=0.0,key="t_block_e1y")
+                    temp_e1[2] = axes_z.number_input(r"$\vec{e_1}$",label_visibility ='hidden',placeholder="Z",value=0.0,key="t_block_e1z")
+                    temp_e2[0] = axes_x.number_input(r"$\vec{e_2}$",label_visibility ='visible',placeholder="X",value=0.0,key="t_block_e2x")
+                    temp_e2[1] = axes_y.number_input(r"$\vec{e_2}$",label_visibility ='hidden',placeholder="Y",value=1.0,key="t_block_e2y")
+                    temp_e2[2] = axes_z.number_input(r"$\vec{e_2}$",label_visibility ='hidden',placeholder="Z",value=0.0,key="t_block_e2z")
+                    temp_e3[0] = axes_x.number_input(r"$\vec{e_3}$",label_visibility ='visible',placeholder="X",value=0.0,key="t_block_e3x")
+                    temp_e3[1] = axes_y.number_input(r"$\vec{e_3}$",label_visibility ='hidden',placeholder="Y",value=0.0,key="t_block_e3y")
+                    temp_e3[2] = axes_z.number_input(r"$\vec{e_3}$",label_visibility ='hidden',placeholder="Z",value=1.0,key="t_block_e3z")
+                ellipsoid = st.checkbox("Make it Ellipsoid", value=False,key="t_block_ellipsoid")
 
             elif temp_geo_type == "Cylinder":
-                temp_radius = st.number_input("Radius", value=None)
-                temp_height = st.number_input("Height", value=None)
+                temp_radius = st.number_input("Radius", value=None,key="t_cylinder_r")
+                temp_height = st.number_input("Height", value=None,key="t_cylinder_h")
                 with st.expander("Cylinder axis", expanded=False):
                     axis_x,axis_y,axis_z = st.columns(3)
-                    temp_axis_x = axis_x.number_input("Axis",label_visibility ='visible',placeholder="X",value=0.0)
-                    temp_axis_y = axis_y.number_input("Axis",label_visibility ='hidden',placeholder="Y",value=0.0)
-                    temp_axis_z = axis_z.number_input("Axis",label_visibility ='hidden',placeholder="Z",value=1.0)
-                
+                    temp_cylinder_axis = [None]*3
+                    temp_cylinder_axis[0] = axis_x.number_input("Axis",label_visibility ='visible',placeholder="X",value=0.0,key="t_cylinder_axis_x")
+                    temp_cylinder_axis[1] = axis_y.number_input("Axis",label_visibility ='hidden',placeholder="Y",value=0.0,key="t_cylinder_axis_y")
+                    temp_cylinder_axis[2] = axis_z.number_input("Axis",label_visibility ='hidden',placeholder="Z",value=1.0,key="t_cylinder_axis_z")
+
                 with st.expander("Subclass", expanded=False):
 
-                    if st.checkbox("Make it subclass", value=False):
-                        subs = st.radio("Subclass type", ["Cone", "Wedge"])
+                    if st.checkbox("Make it subclass", value=False,key="t_cylinder_subclass"):
+                        subs = st.radio("Subclass type", ["Cone", "Wedge"],key="t_cylinder_subclass_type")
 
                         if subs == "Cone":
-                            radius2 = st.number_input("Top radius", value=None)
+                            radius2 = st.number_input("Top radius", value=None,key="t_cylinder_radius2")
                         if subs == "Wedge":
-                            angle = st.number_input("Wedge angle",placeholder=r'Degree or radian in unit of $\pi$', value=None)
+                            angle = st.number_input("Wedge angle",placeholder='Degree or radian in unit of pi', value=None,key="t_cylinder_wedge_angle")
                             wedge_vec_x, wedge_vec_y, wedge_vec_z = st.columns(3)
-                            wedge_x = wedge_vec_x.number_input("Wedge vector",label_visibility ='visible',placeholder="X",value=1.0)
-                            wedge_y = wedge_vec_y.number_input("Wedge vector",label_visibility ='hidden',placeholder="Y",value=0.0)
-                            wedge_z = wedge_vec_z.number_input("Wedge vector",label_visibility ='hidden',placeholder="Z",value=0.0)
+                            temp_wedge_vec = [None]*3
+                            temp_wedge_vec[0] = wedge_vec_x.number_input("Wedge vector",label_visibility ='visible',placeholder="X",value=1.0,key="t_cylinder_wedge_x")
+                            temp_wedge_vec[1] = wedge_vec_y.number_input("Wedge vector",label_visibility ='hidden',placeholder="Y",value=0.0,key="t_cylinder_wedge_y")
+                            temp_wedge_vec[2] = wedge_vec_z.number_input("Wedge vector",label_visibility ='hidden',placeholder="Z",value=0.0,key="t_cylinder_wedge_z")
             elif temp_geo_type == "Prism":
-                vertices = st.text_area("Vertices list", value="", placeholder="Enter vertices as (x,y,z) per line. They must lie in a plane that's perpendicular to the axis.")
-                temp_height = st.number_input("Height", value=None)
+                vertices = st.text_area("Vertices list", value="123", placeholder="Enter vertices as (x,y,z) per line. They must lie in a plane that's perpendicular to the axis.",key="t_prism_vertices")
+                temp_height = st.number_input("Height", value=None,key="t_prism_h")
                 with st.expander("Prism axis", expanded=False):
                     axis_x,axis_y,axis_z = st.columns(3)
-                    temp_axis_x = axis_x.number_input("Axis",label_visibility ='visible',placeholder="X",value=0.0)
-                    temp_axis_y = axis_y.number_input("Axis",label_visibility ='hidden',placeholder="Y",value=0.0)
-                    temp_axis_z = axis_z.number_input("Axis",label_visibility ='hidden',placeholder="Z",value=1.0)
+                    temp_prism_axis = [None]*3
+                    temp_prism_axis[0] = axis_x.number_input("Axis",label_visibility ='visible',placeholder="X",value=0.0,key="t_prism_axis_x")
+                    temp_prism_axis[1] = axis_y.number_input("Axis",label_visibility ='hidden',placeholder="Y",value=0.0,key="t_prism_axis_y")
+                    temp_prism_axis[2] = axis_z.number_input("Axis",label_visibility ='hidden',placeholder="Z",value=1.0,key="t_prism_axis_z")
                 with st.expander("Center and angle", expanded=False):
-                    prism_x, prism_y, prism_z = st.columns(3)
-                    temp_prism_x = prism_x.number_input("Bottom center",label_visibility ='visible',placeholder="X",value=1.0)
-                    temp_prism_y = prism_y.number_input("Bottom center",label_visibility ='hidden',placeholder="Y",value=0.0)
-                    temp_prism_z = prism_z.number_input("Bottom center",label_visibility ='hidden',placeholder="Z",value=0.0)
-                    sidewall_angle = st.number_input("Sidewall angle",placeholder=r'Degree or radian in unit of $\pi$', value=None)
+                    if st.checkbox("Shift center", value=False,key="t_prism_center_checkbox"):
+                        prism_x, prism_y, prism_z = st.columns(3)
+                        temp_prism_center = [None]*3
+                        temp_prism_center[0] = prism_x.number_input("Bottom center",label_visibility ='visible',placeholder="X",value=1.0,key="t_prism_x")
+                        temp_prism_center[1] = prism_y.number_input("Bottom center",label_visibility ='hidden',placeholder="Y",value=0.0,key="t_prism_y")
+                        temp_prism_center[2] = prism_z.number_input("Bottom center",label_visibility ='hidden',placeholder="Z",value=0.0,key="t_prism_z")
+                    temp_sidewall_angle = st.number_input("Sidewall angle",placeholder='Degree or radian in unit of pi', value=0,key="t_prism_sidewall_angle")
+                
 
 
 
@@ -193,9 +231,9 @@ with st.sidebar:
         xyz = st.expander("Space setup", expanded=True)
 
         x,y,z = xyz.columns(3)
-        sx = x.number_input("Simulation size",label_visibility ='visible',placeholder="X span")
-        sy = y.number_input("Simulation size",label_visibility ='hidden',placeholder="Y span")
-        sz = z.number_input("Simulation size",label_visibility ='hidden',placeholder="Z span")
+        sx = x.number_input("Size",label_visibility ='visible',placeholder="X span")
+        sy = y.number_input(" ",label_visibility ='hidden',placeholder="Y span")
+        sz = z.number_input(" ",label_visibility ='hidden',placeholder="Z span")
         res = xyz.number_input("Simulation resolution", value=10)
         bg_mat = xyz.number_input("Background material", value=1.0)
 
