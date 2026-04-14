@@ -99,7 +99,7 @@ def src_cfg():
         with st.expander("Amplitude parameters"):
             temp_src_amp = st.text_input("Amplitude",placeholder="1.0")
             if st.checkbox("Advanced setup",key='t_src_amp_adv'):
-                temp_src_amp_set = st.radio("Amplitude defined by:",["function","file","data"],horizontal=True)
+                temp_src_amp_set = st.radio("",["function","file","data"],horizontal=True)
                 if temp_src_amp_set == "function":
                     st.write("function")
                 if temp_src_amp_set == "file":
