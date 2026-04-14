@@ -3,6 +3,7 @@ import requests
 import numpy as np
 import plotly.graph_objects as go
 import base64
+from geo import get_meep_block_trace, get_meep_ellipsoid_trace
 from streamlit_sortables import sort_items
 from mat import MATERIAL_KEYS
 st.set_page_config(layout="wide", page_title="Meep Web GUI")
@@ -81,12 +82,28 @@ def get_mesh(sx, sy, sz, nx, ny, nz):
 
 
 @st.dialog("Source configuration",width = 'medium')
-def src_cfg():
-    src_left,src_right = st.columns(2)
+def src_cfg(old_cfg=None):
+    src_left,divider,src_right = st.columns([1,0.1,1])
     with src_left:
         st.write("General parameters")
-        temp_src_type = st.selectbox("Type", ["Custom", "Eigenmode","Gaussian"],index=None)
-        temp_src_comp = st.selectbox("Component", ["Ex", "Ey", "Ez", "Hx", "Hy", "Hz"],index=None,key='t_src_comp')
+        temp_src_type = st.selectbox("Type", ["Custom", "Eigenmode","Gaussian"],index=None,key='t_src_type')
+        with st.expander("Source-time config"):
+            temp_srt_type = st.radio("Time type", ["Gaussian", "Continuous", "Custom",],key='t_srt_type',label_visibility='collapsed',horizontal=True)
+            if temp_srt_type != "Custom":
+                temp_srt_wl = st.number_input("Wavelength",placeholder="Wavelength of the source",key='t_src_f')
+                temp_srt_width = st.number_input("Wavelength width",placeholder="Wavelength width",key='t_src_fd',value = 0.0)
+            else:
+                temp_srt_func = st.text_area("Time function",placeholder="A custom time function of the source, e.g. exp(-t**2)",key='t_src_time_func')
+                temp_srt_f = st.number_input("Frequency",placeholder="Frequency of the source",key='t_src_f_custom',value = 0.0)
+                temp_srt_fwidth = st.number_input("Frequency width",placeholder="Frequency width",key='t_src_fd_custom',value =1e50)
+            with st.expander("Time responce"):
+                temp_srt_start = st.number_input("Start time",placeholder="Time to turn on the source",key='t_src_time_start',value=0.0 if temp_srt_type != "Custom" else -1e20)
+                temp_srt_end = st.number_input("End time",placeholder="Time to turn off the source",key='t_src_time_end',value =1e20)
+                if temp_srt_type != "Custom":
+                    temp_srt_cutoff = st.number_input("Cutoff",placeholder="Cutoff for continuous source",key='t_src_time_cutoff',value=None if temp_srt_type == "Continuous" else 5.0)
+                if temp_srt_type == "Continuous":
+                    temp_srt_slowness = st.number_input("Slowness",placeholder="Slowness for total-field/scattered-field source",key='t_src_time_slowness',value=3.0)
+            temp_srt_int = st.checkbox("Make it ntegral of current",key='t_src_time_int',value=False)
         x,y,z = st.columns(3)
         temp_src_center =[None]*3
         temp_src_center[0]= x.number_input("Center",label_visibility ='visible',placeholder="X",value=None)
@@ -99,16 +116,77 @@ def src_cfg():
         temp_src_size[2]= z1.number_input("Size",label_visibility ='hidden',placeholder="Z",value=None)
         with st.expander("Amplitude parameters"):
             temp_src_amp = st.text_input("Amplitude",placeholder="1.0")
-            if st.checkbox("Advanced setup",key='t_src_amp_adv'):
-                temp_src_amp_set = st.radio("",["function","file","data"],horizontal=True)
+            if st.checkbox("More advanced amplitude",key='t_src_amp_adv'):
+                temp_src_amp_set = st.radio("defined by",["function","file","data"],horizontal=True,label_visibility='collapsed')
                 if temp_src_amp_set == "function":
                     st.write("function")
                 if temp_src_amp_set == "file":
                     st.write("file")
                 if temp_src_amp_set == "data":
                     st.write("data")
+
     with src_right:
-        pass
+        st.write("Source parameters")
+        if st.session_state.get('t_src_type') == None:
+            st.error("Please specify source type.")
+        if st.session_state.get('t_src_type') == "Custom":
+            temp_src_comp = st.selectbox("Component", ["Ex", "Ey", "Ez", "Hx", "Hy", "Hz"],index=None,key='t_src_comp_custom')
+        if st.session_state.get('t_src_type') == "Eigenmode":
+            temp_src_comp = st.selectbox("Component", ['All',"Ex", "Ey", "Ez", "Hx", "Hy", "Hz"],index=0,key='t_src_comp_eig')
+
+            temp_eig_band = st.number_input('Eigenband index', min_value=1, step=1,placeholder = 'The index of n of the desided band.',key = 't_src_eig_band')
+            temp_eig_res = st.number_input('Eigenmode solver resolution',placeholder='Resolution for the eigenmode solver',key='t_src_eig_res',value = 2*st.session_state.get('g_sim_res') if st.session_state.get('g_sim_res') !=None else 20)
+            temp_eig_tol = st.text_input('Eigenmode solver tolerance',placeholder='Tolerance for the eigenmode solver.',key='t_src_eig_tol',value = '1e12')
+            with st.expander("Eigenmode lattice"):
+                x,y,z = st.columns(3)
+                temp_eig_lat_size = [None]*3
+                temp_eig_lat_size[0]= x.number_input("Lattice size",label_visibility ='visible',placeholder="X",value=None,key='t_src_eig_lat_sx')
+                temp_eig_lat_size[1]= y.number_input("Lattice size",label_visibility ='hidden',placeholder="Y",value=None,key='t_src_eig_lat_sy')
+                temp_eig_lat_size[2]= z.number_input("Lattice size",label_visibility ='hidden',placeholder="Z",value=None,key='t_src_eig_lat_sz')
+                temp_eig_lat_center = [None]*3
+                temp_eig_lat_center[0]= x.number_input("Lattice center",label_visibility ='visible',placeholder="X",value=None,key='t_src_eig_lat_cx')
+                temp_eig_lat_center[1]= y.number_input("Lattice center",label_visibility ='hidden',placeholder="Y",value=None,key='t_src_eig_lat_cy')
+                temp_eig_lat_center[2]= z.number_input("Lattice center",label_visibility ='hidden',placeholder="Z",value=None,key='t_src_eig_lat_cz')
+            with st.expander("Eigenmode parity"):
+                temp_eig_par = st.multiselect("Parity", ["No parity","Even Z", "Odd Z", "Even Y", "ODD Y"],key='t_src_eig_parity',default=["No parity"])
+            with st.expander("Direction, frequency and reciprocal for eigenmode"):
+                temp_eig_match_freq = st.checkbox("Match frequency",key='t_src_eig_match_freq')
+                temp_eig_dir = st.selectbox("Direction", ["Auto","X", "Y", "Z"],key='t_src_eig_dir',index= 0)
+                x,y,z = st.columns(3)
+                temp_eig_kpt = [None]*3
+                temp_eig_kpt[0] = x.number_input("k-point",label_visibility ='visible',placeholder="kx",key='t_src_eig_kptx')
+                temp_eig_kpt[1] = y.number_input("k-point",label_visibility ='hidden',placeholder="ky",key='t_src_eig_kpty')
+                temp_eig_kpt[2] = z.number_input("k-point",label_visibility ='hidden',placeholder="kz",key='t_src_eig_kptz')
+        if st.session_state.get('t_src_type') == "Gaussian":
+            
+            temp_src_comp = st.selectbox("Component", ['All',"Ex", "Ey", "Ez", "Hx", "Hy", "Hz"],index=0,key='t_src_comp_gau')
+            temp_gau_w0 = st.number_input("Beam waist w0", value=None,key='t_src_gau_w0') 
+            temp_gau_2d = st.checkbox("Make it 2D",key='t_src_gau_2d')
+            temp_gau_x0 = [None]*3
+            temp_gau_kdir = [None]*3
+            temp_gau_E0 = [None]*3
+
+            with st.expander("Focus, direction and polarization"):
+                x,y,z = st.columns(3)
+                temp_gau_x0[0]= x.number_input("Focus",label_visibility ='visible',placeholder="X",value=None,key='t_src_gau_x0x')
+                temp_gau_x0[1]= y.number_input("Focus",label_visibility ='hidden',placeholder="Y",value=None,key='t_src_gau_x0y')
+                temp_gau_x0[2]= z.number_input("Focus",label_visibility ='hidden',placeholder="Z",value=None,key='t_src_gau_x0z')
+                temp_gau_kdir[0]= x.number_input("Direction",label_visibility ='visible',placeholder="X",value=None,key='t_src_gau_kdirx')
+                temp_gau_kdir[1]= y.number_input("Direction",label_visibility ='hidden',placeholder="Y",value=None,key='t_src_gau_kdiry')
+                temp_gau_kdir[2]= z.number_input("Direction",label_visibility ='hidden',placeholder="Z",value=None,key='t_src_gau_kdirz')
+                temp_gau_E0[0]= x.number_input("Polarization",label_visibility ='visible',placeholder="Ex",value=None,key='t_src_gau_E0x')
+                temp_gau_E0[1]= y.number_input("Polarization",label_visibility ='hidden',placeholder="Ey",value=None,key='t_src_gau_E0y')
+                temp_gau_E0[2]= z.number_input("Polarization",label_visibility ='hidden',placeholder="Ez",value=None,key='t_src_gau_E0z')
+
+            
+
+
+
+
+
+
+
+
 
 
 
@@ -265,7 +343,7 @@ with st.sidebar:
         sx = x.number_input("Size",label_visibility ='visible',placeholder="X span")
         sy = y.number_input(" ",label_visibility ='hidden',placeholder="Y span")
         sz = z.number_input(" ",label_visibility ='hidden',placeholder="Z span")
-        res = xyz.number_input("Simulation resolution", value=10)
+        res = xyz.number_input("Simulation resolution", value=10,key='g_sim_res')
         bg_mat = xyz.number_input("Background material", value=1.0)
 
         BCs = st.expander("Boundary conditions", expanded=False)
@@ -300,71 +378,41 @@ with st.sidebar:
 
 tab_view, tab_res = st.tabs(["3D viewer", "Results"])
 with tab_view:
-    st.info("3D viewer will be implemented here.")
+    fig = go.Figure()
+    dummy_block_trace_b = get_meep_block_trace(
+    center=(1.5, 0, 0),
+    size=(0.8, 0.8, 0.8),
+    e1=(1, 0, 0), e2=(0, 1, 0), e3=(0, 0, 1), # 无实际旋转，默认 Z 轴
 
-# 1. 仿真设置
-"""with tab_cfg:
-    c1, c2, c3 = st.columns(3)
-    box1 = c1.container(border=True)
-    box1_title = box1.subheader("📐 Space setup" )
-    sx = box1.number_input("Size X", value=5.0)
-    sy = box1.number_input("Size Y", value=5.0)
-    sz = box1.number_input("Size Z", value=5.0)
-    res = box1.number_input("Simulation resolution", value=10)
-    bg_eps = box1.number_input("Background material", value=1.0)
+    color="blue",
+    name="Dummy Block B (Standard)"
+    )
+    dummy_block_trace_c = get_meep_block_trace(
+    center=(0, -1.5, 0),
+    size=(1.2, 0.4, 0.8),
+    e1=(1, 0.5, 0), e2=(0, 1, 0), e3=(0, 0, 1),    # 旋转 45 度
+    color="green",
+    name="Dummy Block C (Cut)"
+    )
+    fig.add_traces(dummy_block_trace_b)
+    fig.add_traces(dummy_block_trace_c)
+    fig.update_layout(
+    scene=dict(
+        xaxis_title='X (um)',
+        yaxis_title='Y (um)',
+        zaxis_title='Z (um)',
+        # 核心：确保 3D 物理比例 1:1:1，否则球体会变成橄榄球
+        aspectmode='data',
+        camera=dict(
+            eye=dict(x=1.8, y=1.8, z=1.2) # 设置默认视角
+        )
+    ),
+    margin=dict(l=0, r=0, b=0, t=60),
+    legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
+    )
+    st.plotly_chart(fig, width = 'stretch',height= 'stretch')
 
-    box2 = c2.container(border=True)
-    box2_title = box2.subheader("Boundary conditions")
 
-    box3 = c3.container(border=True)
-    box3_title = box3.subheader("Simulation Setup")
-    sim_until = box3.selectbox("Termination unitl", ["Time / ms", "Si", "SiO2", "Ag", "Au"])
-    if st.button("🚀 Run simulation", type="primary", use_container_width=True):
-        payload = {
-            "sx": sx, "sy": sy, "sz": sz, "res": res, "bg_eps": bg_eps, "until": sim_until,
-            "geoms": st.session_state.geoms, "sources": st.session_state.sources
-        }
-        with st.spinner("WSL 计算中..."):
-            r = requests.post("http://127.0.0.1:8000/simulate_full", json=payload)
-            st.session_state.results = r.json()"""
-
-# 2. 几何体管理
-"""with tab_geo:
-    geo_add_col,geo_list_col = st.columns([2,1])
-
-    with geo_add_col.container(border = True):
-        st.subheader("Add Geometry")
-        g_type = st.selectbox("Type", ["Block", "Sphere"])
-        mat = st.selectbox("Material", ["User defined (Epsilon)", "Si", "SiO2", "Ag", "Au"])
-        eps = st.number_input("Custom Epsilon", value=2.0) if mat == "User defined (Epsilon)" else 1.0
-        pos = (st.number_input("X"), st.number_input("Y"), st.number_input("Z"))
-        if g_type == "Block":
-            s_val = (st.number_input("SX", value=1.0), st.number_input("SY", value=1.0), st.number_input("SZ", value=1.0))
-            params = {"size": s_val}
-        else:
-            params = {"radius": st.number_input("R", value=1.0)}
-        
-        if st.button("confirm"):
-            st.session_state.geoms.append({"type": g_type, "material": mat, "eps": eps, "center": pos, **params})
-            st.rerun()
-
-    
-    with geo_list_col.container(border = True):
-        st.subheader("Geometry List")
-
-        if st.session_state.geoms:
-            items = [f"{g['type']} ({g['material']}) at {g['center']}" for i, g in enumerate(st.session_state.geoms)]
-            sorted_items = sort_items(items,direction='vertical')
-            if sorted_items != items:
-                new_list = [st.session_state.geoms[int(s.split(":")[0])] for s in sorted_items]
-                st.session_state.geoms = new_list
-                st.rerun()
-        else:
-            st.info("No geometries added yet.")
-"""
-"""# 3. 光源管理
-with tab_src:
-    pass"""
 
 # 4. 结果渲染
 with tab_res:
