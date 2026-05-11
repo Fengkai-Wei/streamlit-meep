@@ -1,5 +1,64 @@
+
+import uuid
 import numpy as np
 import plotly.graph_objects as go
+
+
+class BasicGeometry:
+    def __init__(self, color, name, material, center):
+        self.uid = uuid.uuid4().hex
+        self.color = color
+        self.name = name
+        self.material = material
+        self.center = center
+
+class Block(BasicGeometry):
+    def __init__(self, color, name, material, center, size, e1, e2, e3):
+        super().__init__(color, name, material, center)
+        self.size = size
+        self.e1 = e1
+        self.e2 = e2
+        self.e3 = e3
+
+class Ellipsoid(Block):
+    def __init__(self, color, name, material, center, size, e1, e2, e3):
+        super().__init__(color, name, material, center, size, e1, e2, e3)
+
+class Sphere(BasicGeometry):
+    def __init__(self, color, name, material, center, radius):
+        super().__init__(color, name, material, center)
+        self.radius = radius
+
+class Prism(BasicGeometry):
+    def __init__(self, color, name, material, center, vertices_list, height, prism_axis, sidewall_angle,shift_center=None):
+        super().__init__(color, name, material, center)
+        self.vertices_list = vertices_list
+        self.height = height
+        self.prism_axis = prism_axis
+        self.sidewall_angle = sidewall_angle
+        self.shift_center = shift_center if shift_center is not None else None
+
+class Cylinder(BasicGeometry):
+    def __init__(self, color, name, material, center, radius, height, axis):
+        super().__init__(color, name, material, center)
+        self.radius = radius
+        self.height = height
+        self.axis = axis
+
+class Cone(Cylinder):
+    def __init__(self, color, name, material, center, radius, radius1, height, axis):
+        super().__init__(color, name, material, center, radius, height, axis)
+        self.radius1 = radius1
+
+
+class Wedge(Cylinder):
+    def __init__(self, color, name, material, center, radius, height, axis, wedge_angle, wedge_start):
+        super().__init__(color, name, material, center,radius,height,axis)
+        self.wedge_angle = wedge_angle
+        self.wedge_start = wedge_start 
+
+
+
 
 def get_meep_block_trace(center, size, e1, e2, e3, color="blue", name="Block"):
     c = np.array(center)
@@ -325,3 +384,22 @@ def get_meep_wedge(center, radius, height, axis, wedge_angle, wedge_start, color
         wedge_start=wedge_start, 
         color=color, name="Wedge"
     )
+
+def geo_trace_checker(obj: BasicGeometry):
+    if isinstance(obj, Ellipsoid):
+        return get_meep_ellipsoid_trace(obj.center, obj.size, obj.e1, obj.e2, obj.e3, color=obj.color, name=obj.name)
+    elif isinstance(obj, Block):
+        return get_meep_block_trace(obj.center, obj.size, obj.e1, obj.e2, obj.e3, color=obj.color, name=obj.name)
+    elif isinstance(obj, Sphere):
+        return get_meep_sphere(obj.center, obj.radius, color=obj.color, name=obj.name)
+    elif isinstance(obj, Prism):
+        return get_meep_prism_mesh(obj.vertices_list, obj.height, obj.prism_axis, obj.sidewall_angle, 
+                                   bottom_center=obj.center, color=obj.color, name=obj.name)
+    elif isinstance(obj, Wedge):
+        return get_meep_wedge(obj.center, obj.radius, obj.height, obj.axis, color=obj.color)
+    elif isinstance(obj, Cone):
+        return get_meep_cone(obj.center, obj.radius, obj.radius1, obj.height, obj.axis, color=obj.color)
+    elif isinstance(obj, Cylinder):
+        return get_meep_cylinder(obj.center, obj.radius, obj.height, obj.axis, obj.wedge_angle, obj.wedge_start, color=obj.color)
+    else:
+        raise ValueError(f"Unsupported geometry type: {type(obj)}")

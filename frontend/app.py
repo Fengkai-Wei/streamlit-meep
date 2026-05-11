@@ -3,9 +3,12 @@ import requests
 import numpy as np
 import plotly.graph_objects as go
 import base64
-from geo import get_meep_block_trace, get_meep_ellipsoid_trace
+from geo import *
 from streamlit_sortables import sort_items
 from mat import MATERIAL_KEYS
+from utils import clear_temp
+
+
 st.set_page_config(layout="wide", page_title="Meep Web GUI")
 
 st.markdown("""
@@ -73,6 +76,23 @@ if "results" not in st.session_state: st.session_state.results = None
 if "active_page" not in st.session_state: st.session_state.active_page = "simulation"
 
 # --- 工具函数 ---
+
+def card_widget(info, uid, top=False, bottom=False):
+    key_prefix = f'geolist_{uid}'
+    with st.popover(info[0], width='stretch', key=key_prefix):
+        st.title(info[0])
+        with st.container(horizontal=True, border=False, gap='xxsmall'):
+            st.button("⚙️", type="tertiary", key=f'{key_prefix}_edit')
+            st.button("🗑️", type="tertiary", key=f'{key_prefix}_delete')
+            if not top:
+                st.button("🔼", type="tertiary", key=f'{key_prefix}_move_up')
+            if not bottom:
+                st.button("🔽", type="tertiary", key=f'{key_prefix}_move_down')
+
+
+
+
+
 @st.cache_data
 def get_mesh(sx, sy, sz, nx, ny, nz):
     x, y, z = np.meshgrid(np.linspace(-sx/2, sx/2, nx), 
@@ -103,7 +123,7 @@ def src_cfg(old_cfg=None):
                     temp_srt_cutoff = st.number_input("Cutoff",placeholder="Cutoff for continuous source",key='t_src_time_cutoff',value=None if temp_srt_type == "Continuous" else 5.0)
                 if temp_srt_type == "Continuous":
                     temp_srt_slowness = st.number_input("Slowness",placeholder="Slowness for total-field/scattered-field source",key='t_src_time_slowness',value=3.0)
-            temp_srt_int = st.checkbox("Make it ntegral of current",key='t_src_time_int',value=False)
+            temp_srt_int = st.checkbox("Make it integral of current",key='t_src_time_int',value=False)
         x,y,z = st.columns(3)
         temp_src_center =[None]*3
         temp_src_center[0]= x.number_input("Center",label_visibility ='visible',placeholder="X",value=None)
@@ -196,6 +216,7 @@ def add_geometry(old_cfg=None):
     with geo_left:
         st.write("General parameters")
         temp_geo_type = st.selectbox("Type", ["Block", "Sphere", "Cylinder","Prism"],index=None)
+        temp_geo_name = st.text_input("Name",placeholder="Name of the geometry",key='tg_name')
         temp_geo_mat = st.selectbox("Material", MATERIAL_KEYS,index=None)
         x,y,z = st.columns(3)
         temp_geo_center = [None]*3
@@ -204,34 +225,114 @@ def add_geometry(old_cfg=None):
         temp_geo_center[2]= z.number_input("Center",label_visibility ='hidden',placeholder="Z",value=None,key="tg_cz")
         
         if st.button("Confirm", type="primary", width='stretch'):
-            st.write(f"{temp_geo_type} with {temp_geo_mat} at {temp_geo_center} added.")
             if temp_geo_type == "Sphere":
-                st.write(f"Radius: {st.session_state.get('t_sphere_r')}")
+                st.session_state.geoms.append(
+                    Sphere(center=tuple(temp_geo_center), 
+                           radius=st.session_state.get('t_sphere_r'), 
+                           color="blue", 
+                           name=st.session_state.get('tg_name')+" (Sphere)",
+                           material=temp_geo_mat))
+                
             if temp_geo_type == "Block":
-                st.write(f"Size: ({st.session_state.get('t_block_sx')}, {st.session_state.get('t_block_sy')}, {st.session_state.get('t_block_sz')})")
-                st.write(f"E1: {st.session_state.get('t_block_e1x')}, {st.session_state.get('t_block_e1y')}, {st.session_state.get('t_block_e1z')}")
-                st.write(f"E2: {st.session_state.get('t_block_e2x')}, {st.session_state.get('t_block_e2y')}, {st.session_state.get('t_block_e2z')}")
-                st.write(f"E3: {st.session_state.get('t_block_e3x')}, {st.session_state.get('t_block_e3y')}, {st.session_state.get('t_block_e3z')}")
-                st.write(f"Make it Ellipsoid: {st.session_state.get('t_block_ellipsoid')}")
+                if st.session_state.get("t_block_ellipsoid"):
+                    st.session_state.geoms.append(
+                        Ellipsoid(center=tuple(temp_geo_center), 
+                                  size=(st.session_state.get('t_block_sx'),
+                                        st.session_state.get('t_block_sy'), 
+                                        st.session_state.get('t_block_sz')), 
+                                        e1=(st.session_state.get('t_block_e1x'), 
+                                            st.session_state.get('t_block_e1y'), 
+                                            st.session_state.get('t_block_e1z')), 
+                                        e2=(st.session_state.get('t_block_e2x'), 
+                                            st.session_state.get('t_block_e2y'), 
+                                            st.session_state.get('t_block_e2z')),
+                                        e3=(st.session_state.get('t_block_e3x'),
+                                            st.session_state.get('t_block_e3y'),
+                                             st.session_state.get('t_block_e3z')), 
+                                        color="blue", name=st.session_state.get('tg_name')+" (Ellipsoid)",
+                                        material=temp_geo_mat))
+                else:
+                    st.session_state.geoms.append(
+                        Block(center=tuple(temp_geo_center), 
+                              size=(st.session_state.get('t_block_sx'),
+                                    st.session_state.get('t_block_sy'), 
+                                    st.session_state.get('t_block_sz')), 
+                                    e1=(st.session_state.get('t_block_e1x'), 
+                                        st.session_state.get('t_block_e1y'), 
+                                        st.session_state.get('t_block_e1z')), 
+                                    e2=(st.session_state.get('t_block_e2x'), 
+                                        st.session_state.get('t_block_e2y'), 
+                                        st.session_state.get('t_block_e2z')),
+                                    e3=(st.session_state.get('t_block_e3x'),
+                                        st.session_state.get('t_block_e3y'),
+                                         st.session_state.get('t_block_e3z')), 
+                                    color="blue", name=st.session_state.get('tg_name')+" (Block)",
+                                    material=temp_geo_mat))
+                    
             if temp_geo_type == "Cylinder":
-                st.write(f"Radius: {st.session_state.get('t_cylinder_r')}")
-                st.write(f"Height: {st.session_state.get('t_cylinder_h')}")
-                st.write(f"Axis: ({st.session_state.get('t_cylinder_axis_x')}, {st.session_state.get('t_cylinder_axis_y')}, {st.session_state.get('t_cylinder_axis_z')})")
                 if st.session_state.get("t_cylinder_subclass"):
-                    st.write(f"Subclass type: {st.session_state.get('t_cylinder_subclass_type')}")
                     if st.session_state.get('t_cylinder_subclass_type') == "Cone":
-                        st.write(f"Top radius: {st.session_state.get('t_cylinder_radius2')}")
+                        st.session_state.geoms.append(
+                            Cone(center=tuple(temp_geo_center), 
+                                 radius=st.session_state.get('t_cylinder_r'), 
+                                 height=st.session_state.get('t_cylinder_h'), 
+                                 axis=(st.session_state.get('t_cylinder_axis_x'), 
+                                       st.session_state.get('t_cylinder_axis_y'), 
+                                       st.session_state.get('t_cylinder_axis_z')), 
+                                 radius1=st.session_state.get('t_cylinder_radius2'),
+                                 color="blue", name=st.session_state.get('tg_name')+" (Cone)",
+                                 material=temp_geo_mat)
+                        )
                     if st.session_state.get('t_cylinder_subclass_type') == "Wedge":
-                        st.write(f"Wedge angle: {st.session_state.get('t_cylinder_wedge_angle')}")
-                        st.write(f"Wedge vector:({st.session_state.get('t_cylinder_wedge_x')}, {st.session_state.get('t_cylinder_wedge_y')}, {st.session_state.get('t_cylinder_wedge_z')})")
+                        st.session_state.geoms.append(
+                            Wedge(center=tuple(temp_geo_center), 
+                                   radius=st.session_state.get('t_cylinder_r'), 
+                                   height=st.session_state.get('t_cylinder_h'), 
+                                   axis=(st.session_state.get('t_cylinder_axis_x'), 
+                                         st.session_state.get('t_cylinder_axis_y'), 
+                                         st.session_state.get('t_cylinder_axis_z')), 
+                                   wedge_angle=st.session_state.get('t_cylinder_wedge_angle'),
+                                   wedge_start=(st.session_state.get('t_cylinder_wedge_x'), 
+                                                 st.session_state.get('t_cylinder_wedge_y'), 
+                                                 st.session_state.get('t_cylinder_wedge_z')),
+                                   color="blue", name=st.session_state.get('tg_name')+" (Wedge)",
+                                   material=temp_geo_mat)
+                        )
+
+                else:
+                    st.session_state.geoms.append(
+                        Cylinder(center=tuple(temp_geo_center), 
+                                 radius=st.session_state.get('t_cylinder_r'), 
+                                 height=st.session_state.get('t_cylinder_h'), 
+                                 axis=(st.session_state.get('t_cylinder_axis_x'), 
+                                       st.session_state.get('t_cylinder_axis_y'), 
+                                       st.session_state.get('t_cylinder_axis_z')), 
+                                 color="blue", name=st.session_state.get('tg_name')+" (Cylinder)",
+                                 material=temp_geo_mat)
+                    )
+
+            
 
             if temp_geo_type == "Prism":
-                st.write(f"Vertices: {st.session_state.get('t_prism_vertices')}")
-                st.write(f"Height: {st.session_state.get('t_prism_h')}")
-                st.write(f"Axis: ({st.session_state.get('t_prism_axis_x')}, {st.session_state.get('t_prism_axis_y')}, {st.session_state.get('t_prism_axis_z')})")
-                if st.session_state.get('t_prism_center_checkbox'):
-                    st.write(f"Shift center: ({st.session_state.get('t_prism_center_x')}, {st.session_state.get('t_prism_center_y')}, {st.session_state.get('t_prism_center_z')})")
-                st.write(f"Sidewall angle: {st.session_state.get('t_prism_sidewall_angle')}")
+                st.session_state.geoms.append(
+                    Prism(center=tuple(temp_geo_center),
+                          height=st.session_state.get('t_prism_h'),
+                          axis=(st.session_state.get('t_prism_axis_x'), 
+                                st.session_state.get('t_prism_axis_y'), 
+                                st.session_state.get('t_prism_axis_z')),
+                          sidewall_angle=st.session_state.get('t_prism_sidewall_angle'),
+                          vertices=st.session_state.get('t_prism_vertices'),
+                          shift_center = (
+                              st.session_state.get('t_prism_center_x'),
+                              st.session_state.get('t_prism_center_y'),
+                              st.session_state.get('t_prism_center_z'),
+                              
+                          ) if st.session_state.get("t_prism_center_checkbox") else None, 
+                          color="blue", name=st.session_state.get('tg_name')+" (Prism)",
+                          material=temp_geo_mat)
+                )
+            clear_temp()
+            st.rerun()
 
 
     with geo_right:
@@ -357,14 +458,12 @@ with st.sidebar:
         if st.button("Add geometry", type="primary", width='stretch'):
             add_geometry()
 
+        
         with st.expander("Geometry list", expanded=True):
             if st.session_state.geoms:
-                items = [f"{g['type']} ({g['material']}) at {g['center']}" for i, g in enumerate(st.session_state.geoms)]
-                sorted_items = sort_items(items,direction='vertical')
-                if sorted_items != items:
-                    new_list = [st.session_state.geoms[int(s.split(":")[0])] for s in sorted_items]
-                    st.session_state.geoms = new_list
-                    st.rerun()
+                for idx, geom in enumerate(st.session_state.geoms):
+                    uid = getattr(geom, 'uid')
+                    card_widget([f"{idx+1}. {geom.name}", geom.material], uid=uid, top=idx==0, bottom=idx==len(st.session_state.geoms)-1)
             else:
                 st.info("No geometries added yet.")
 
@@ -379,20 +478,11 @@ with st.sidebar:
 tab_view, tab_res = st.tabs(["3D viewer", "Results"])
 with tab_view:
     fig = go.Figure()
-    dummy_block_trace_b = get_meep_block_trace(
-    center=(1.5, 0, 0),
-    size=(0.8, 0.8, 0.8),
-    e1=(1, 0, 0), e2=(0, 1, 0), e3=(0, 0, 1), # 无实际旋转，默认 Z 轴
-
-    color="blue",
-    name="Dummy Block B (Standard)"
+    dummy_block_trace_b = geo_trace_checker(
+        Ellipsoid(center=(0, 0, 0), size=(1, 1.5, 0.8), e1=(1, 0, 0), e2=(0, 1, 0), e3=(0, 0, 1), color="red", name="Dummy Block B (Ellipsoid)",material="Si")
     )
-    dummy_block_trace_c = get_meep_block_trace(
-    center=(0, -1.5, 0),
-    size=(1.2, 0.4, 0.8),
-    e1=(1, 0.5, 0), e2=(0, 1, 0), e3=(0, 0, 1),    # 旋转 45 度
-    color="green",
-    name="Dummy Block C (Cut)"
+    dummy_block_trace_c = geo_trace_checker(
+    Block(center=(0, -1.5, 0), size=(1.2, 0.4, 0.8), e1=(1, 0.5, 0), e2=(0, 1, 0), e3=(0, 0, 1), color="green", name="Dummy Block C (Cut)",material="Si")
     )
     fig.add_traces(dummy_block_trace_b)
     fig.add_traces(dummy_block_trace_c)
