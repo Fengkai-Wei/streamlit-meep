@@ -1,1 +1,4 @@
-
+requests
+numpy
+plotly
+streamlit-sortables
