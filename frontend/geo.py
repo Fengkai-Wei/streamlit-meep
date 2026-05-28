@@ -396,10 +396,10 @@ def geo_trace_checker(obj: BasicGeometry):
         return get_meep_prism_mesh(obj.vertices_list, obj.height, obj.prism_axis, obj.sidewall_angle, 
                                    bottom_center=obj.center, color=obj.color, name=obj.name)
     elif isinstance(obj, Wedge):
-        return get_meep_wedge(obj.center, obj.radius, obj.height, obj.axis, color=obj.color)
+        return get_meep_wedge(obj.center, obj.radius, obj.height, obj.axis, wedge_angle=obj.wedge_angle, wedge_start=obj.wedge_start, color=obj.color, name=obj.name)
     elif isinstance(obj, Cone):
-        return get_meep_cone(obj.center, obj.radius, obj.radius1, obj.height, obj.axis, color=obj.color)
+        return get_meep_cone(obj.center, obj.radius, obj.radius1, obj.height, obj.axis, color=obj.color, name=obj.name)
     elif isinstance(obj, Cylinder):
-        return get_meep_cylinder(obj.center, obj.radius, obj.height, obj.axis, obj.wedge_angle, obj.wedge_start, color=obj.color)
+        return get_meep_cylinder(obj.center, obj.radius, obj.height, obj.axis, color=obj.color, name=obj.name)
     else:
         raise ValueError(f"Unsupported geometry type: {type(obj)}")

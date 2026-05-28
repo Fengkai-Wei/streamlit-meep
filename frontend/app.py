@@ -77,17 +77,80 @@ if "active_page" not in st.session_state: st.session_state.active_page = "simula
 
 # --- 工具函数 ---
 
-def card_widget(info, uid, top=False, bottom=False):
-    key_prefix = f'geolist_{uid}'
-    with st.popover(info[0], width='stretch', key=key_prefix):
-        st.title(info[0])
+def _validate_geom(geom):
+    if not isinstance(geom.center, tuple) or len(geom.center) != 3:
+        return False, "Geometry center must be a tuple of 3 values."
+    if not all(isinstance(v, (int, float)) for v in geom.center):
+        return False, "Geometry center values must be numeric(int or float)."
+
+    if isinstance(geom, Sphere):
+        if not isinstance(geom.radius, (int, float)) or geom.radius < 0:
+            return False, "Sphere radius must be a non-negative number."
+    if isinstance(geom, Block) or isinstance(geom, Ellipsoid):
+        if not all(isinstance(v, (int, float)) for v in geom.size):
+            return False, "Block / Ellipsoid size values must be numeric(int or float)."
+        if (np.any(np.cross(geom.e1, geom.e2)) and np.any(np.cross(geom.e2, geom.e3)) and np.any(np.cross(geom.e1, geom.e3))):
+            return False, "Block / Ellipsoid axes must be mutually perpendicular."
+    if isinstance(geom, Cylinder):
+        if not isinstance(geom.radius, (int, float)) or geom.radius < 0:
+            return False, "Cylinder radius must be a non-negative number."
+        if not isinstance(geom.height, (int, float)) or geom.height < 0:
+            return False, "Cylinder height must be a non-negative number."
+        if geom.axis == (0, 0, 0):
+            return False, "Cylinder axis cannot be the zero vector."
+        if isinstance(geom, Cone):
+            if not isinstance(geom.radius1, (int, float)) or geom.radius1 < 0:
+                return False, "Cone top radius must be a non-negative number."
+        if isinstance(geom, Wedge):
+            if not isinstance(geom.wedge_angle, (int, float)) or geom.wedge_angle < 0:
+                return False, "Wedge angle must be a non-negative number."
+            if geom.wedge_angle >= 2*np.pi:
+                return False, "Wedge angle must be less than 360 degrees (2*pi radians)."
+            if geom.wedge_start == (0, 0, 0):
+                return False, "Wedge start vector cannot be the zero vector."
+            if np.allclose(np.cross(geom.axis, geom.wedge_start), 0.0, atol=1e-6):
+                return False, "Wedge start vector cannot be parallel to the axis." 
+        if isinstance(geom, Prism):
+            pass
+
+
+
+    return True, None
+
+
+def card_widget(geom, idx, top=False, bottom=False):
+    key_prefix = f'geolist_{getattr(geom, "uid", idx)}'
+    with st.popover(geom.name, width='stretch', key=key_prefix):
+        st.title(geom.name)
+        for attr, value in geom.__dict__.items():
+            if attr in ['uid', 'name', 'color']:
+                continue
+            st.write(f"**{attr}**: {value}")
+        
         with st.container(horizontal=True, border=False, gap='xxsmall'):
-            st.button("⚙️", type="tertiary", key=f'{key_prefix}_edit')
-            st.button("🗑️", type="tertiary", key=f'{key_prefix}_delete')
+            edit_pressed = st.button("⚙️", type="tertiary", key=f'{key_prefix}_edit')
+            delete_pressed = st.button("🗑️", type="tertiary", key=f'{key_prefix}_delete')
+            move_up_pressed = False
+            move_down_pressed = False
             if not top:
-                st.button("🔼", type="tertiary", key=f'{key_prefix}_move_up')
+                move_up_pressed = st.button("🔼", type="tertiary", key=f'{key_prefix}_move_up')
             if not bottom:
-                st.button("🔽", type="tertiary", key=f'{key_prefix}_move_down')
+                move_down_pressed = st.button("🔽", type="tertiary", key=f'{key_prefix}_move_down')
+
+    if edit_pressed:
+        geo_cfg(old_cfg=geom, edit_idx=idx)
+
+    if delete_pressed:
+        st.session_state.geoms.pop(idx)
+        st.rerun()
+
+    if move_up_pressed and idx > 0:
+        st.session_state.geoms[idx - 1], st.session_state.geoms[idx] = st.session_state.geoms[idx], st.session_state.geoms[idx - 1]
+        st.rerun()
+
+    if move_down_pressed and idx < len(st.session_state.geoms) - 1:
+        st.session_state.geoms[idx + 1], st.session_state.geoms[idx] = st.session_state.geoms[idx], st.session_state.geoms[idx + 1]
+        st.rerun()
 
 
 
@@ -211,128 +274,213 @@ def src_cfg(old_cfg=None):
 
 
 @st.dialog("Geometry configuration",width = 'medium')
-def add_geometry(old_cfg=None):
+def geo_cfg(old_cfg=None, edit_idx=None):
+    default_type = None
+    default_name = None
+    default_color = None
+    default_material = None
+    default_center = [None, None, None]
+    default_sphere_r = None
+    default_block_sx = None
+    default_block_sy = None
+    default_block_sz = None
+    default_block_e1 = (1.0, 0.0, 0.0)
+    default_block_e2 = (0.0, 1.0, 0.0)
+    default_block_e3 = (0.0, 0.0, 1.0)
+    default_block_ellipsoid = False
+    default_cylinder_r = None
+    default_cylinder_h = None
+    default_cylinder_axis = (0.0, 0.0, 1.0)
+    default_cylinder_subclass = False
+    default_cylinder_subclass_type = "Cone"
+    default_cylinder_radius2 = None
+    default_cylinder_wedge_angle = None
+    default_cylinder_wedge_vec = (1.0, 0.0, 0.0)
+    default_prism_vertices = None
+    default_prism_h = None
+    default_prism_axis = (0.0, 0.0, 1.0)
+    default_prism_center_checkbox = False
+    default_prism_center = (None, None, None)
+    default_prism_sidewall_angle = 0
+
+    if old_cfg is not None:
+        cfg_type = type(old_cfg).__name__
+        default_color = getattr(old_cfg, 'color', None)
+        default_name = getattr(old_cfg, 'name', None)
+        default_material = getattr(old_cfg, 'material', None)
+        if hasattr(old_cfg, 'center'):
+            center = getattr(old_cfg, 'center')
+            if center is not None:
+                default_center = list(center)
+        if cfg_type == 'Sphere':
+            default_type = 'Sphere'
+            default_sphere_r = getattr(old_cfg, 'radius', None)
+        elif cfg_type == 'Ellipsoid':
+            default_type = 'Block'
+            default_block_ellipsoid = True
+            default_block_sx, default_block_sy, default_block_sz = getattr(old_cfg, 'size', (None, None, None))
+            default_block_e1 = getattr(old_cfg, 'e1', default_block_e1)
+            default_block_e2 = getattr(old_cfg, 'e2', default_block_e2)
+            default_block_e3 = getattr(old_cfg, 'e3', default_block_e3)
+        elif cfg_type == 'Block':
+            default_type = 'Block'
+            default_block_sx, default_block_sy, default_block_sz = getattr(old_cfg, 'size', (None, None, None))
+            default_block_e1 = getattr(old_cfg, 'e1', default_block_e1)
+            default_block_e2 = getattr(old_cfg, 'e2', default_block_e2)
+            default_block_e3 = getattr(old_cfg, 'e3', default_block_e3)
+        elif cfg_type == 'Cone':
+            default_type = 'Cylinder'
+            default_cylinder_subclass = True
+            default_cylinder_subclass_type = 'Cone'
+            default_cylinder_r = getattr(old_cfg, 'radius', None)
+            default_cylinder_h = getattr(old_cfg, 'height', None)
+            default_cylinder_axis = getattr(old_cfg, 'axis', default_cylinder_axis)
+            default_cylinder_radius2 = getattr(old_cfg, 'radius1', None)
+        elif cfg_type == 'Wedge':
+            default_type = 'Cylinder'
+            default_cylinder_subclass = True
+            default_cylinder_subclass_type = 'Wedge'
+            default_cylinder_r = getattr(old_cfg, 'radius', None)
+            default_cylinder_h = getattr(old_cfg, 'height', None)
+            default_cylinder_axis = getattr(old_cfg, 'axis', default_cylinder_axis)
+            default_cylinder_wedge_angle = getattr(old_cfg, 'wedge_angle', None)
+            default_cylinder_wedge_vec = getattr(old_cfg, 'wedge_start', default_cylinder_wedge_vec)
+        elif cfg_type == 'Cylinder':
+            default_type = 'Cylinder'
+            default_cylinder_r = getattr(old_cfg, 'radius', None)
+            default_cylinder_h = getattr(old_cfg, 'height', None)
+            default_cylinder_axis = getattr(old_cfg, 'axis', default_cylinder_axis)
+            default_cylinder_subclass = False
+        elif cfg_type == 'Prism':
+            default_type = 'Prism'
+            default_prism_vertices = getattr(old_cfg, 'vertices_list', None) or getattr(old_cfg, 'vertices', None)
+            default_prism_h = getattr(old_cfg, 'height', None)
+            default_prism_axis = getattr(old_cfg, 'prism_axis', getattr(old_cfg, 'axis', default_prism_axis))
+            default_prism_center_checkbox = getattr(old_cfg, 'shift_center', None) is not None
+            if default_prism_center_checkbox:
+                default_prism_center = tuple(getattr(old_cfg, 'shift_center', default_prism_center))
+            default_prism_sidewall_angle = getattr(old_cfg, 'sidewall_angle', default_prism_sidewall_angle)
+
     geo_left, geo_right = st.columns(2)
     with geo_left:
         st.write("General parameters")
-        temp_geo_type = st.selectbox("Type", ["Block", "Sphere", "Cylinder","Prism"],index=None)
-        temp_geo_name = st.text_input("Name",placeholder="Name of the geometry",key='tg_name')
-        temp_geo_mat = st.selectbox("Material", MATERIAL_KEYS,index=None)
+        temp_geo_type = st.selectbox("Type", ["Block", "Sphere", "Cylinder","Prism"], index=0 if default_type is None else ["Block", "Sphere", "Cylinder","Prism"].index(default_type))
+        temp_geo_name = st.text_input("Name",placeholder="Name of the geometry",key='tg_name', value=default_name or "")
+        temp_geo_mat = st.selectbox("Material", MATERIAL_KEYS, index=0 if default_material not in MATERIAL_KEYS else MATERIAL_KEYS.index(default_material))
         x,y,z = st.columns(3)
         temp_geo_center = [None]*3
-        temp_geo_center[0]= x.number_input("Center",label_visibility ='visible',placeholder="X",value=None,key="tg_cx")
-        temp_geo_center[1]= y.number_input("Center",label_visibility ='hidden',placeholder="Y",value=None,key="tg_cy")
-        temp_geo_center[2]= z.number_input("Center",label_visibility ='hidden',placeholder="Z",value=None,key="tg_cz")
-        
+        temp_geo_center[0]= x.number_input("Center",label_visibility ='visible',placeholder="X",value=default_center[0],key="tg_cx")
+        temp_geo_center[1]= y.number_input("Center",label_visibility ='hidden',placeholder="Y",value=default_center[1],key="tg_cy")
+        temp_geo_center[2]= z.number_input("Center",label_visibility ='hidden',placeholder="Z",value=default_center[2],key="tg_cz")
+
+        temp_geo_color = st.color_picker("Pick a color", value=default_color, key="tg_color")
+
         if st.button("Confirm", type="primary", width='stretch'):
+            new_geom = None
             if temp_geo_type == "Sphere":
-                st.session_state.geoms.append(
-                    Sphere(center=tuple(temp_geo_center), 
-                           radius=st.session_state.get('t_sphere_r'), 
-                           color="blue", 
-                           name=st.session_state.get('tg_name')+" (Sphere)",
-                           material=temp_geo_mat))
+                new_geom = Sphere(center=tuple(temp_geo_center), 
+                                  radius=st.session_state.get('t_sphere_r'), 
+                                  color=temp_geo_color, 
+                                  name=st.session_state.get('tg_name')+" (Sphere)" if " (Sphere)" not in st.session_state.get('tg_name') else st.session_state.get('tg_name'),
+                                  material=temp_geo_mat)
                 
             if temp_geo_type == "Block":
                 if st.session_state.get("t_block_ellipsoid"):
-                    st.session_state.geoms.append(
-                        Ellipsoid(center=tuple(temp_geo_center), 
-                                  size=(st.session_state.get('t_block_sx'),
-                                        st.session_state.get('t_block_sy'), 
-                                        st.session_state.get('t_block_sz')), 
-                                        e1=(st.session_state.get('t_block_e1x'), 
-                                            st.session_state.get('t_block_e1y'), 
-                                            st.session_state.get('t_block_e1z')), 
-                                        e2=(st.session_state.get('t_block_e2x'), 
-                                            st.session_state.get('t_block_e2y'), 
-                                            st.session_state.get('t_block_e2z')),
-                                        e3=(st.session_state.get('t_block_e3x'),
-                                            st.session_state.get('t_block_e3y'),
-                                             st.session_state.get('t_block_e3z')), 
-                                        color="blue", name=st.session_state.get('tg_name')+" (Ellipsoid)",
-                                        material=temp_geo_mat))
+                    new_geom = Ellipsoid(center=tuple(temp_geo_center), 
+                                          size=(st.session_state.get('t_block_sx'),
+                                                st.session_state.get('t_block_sy'), 
+                                                st.session_state.get('t_block_sz')), 
+                                                e1=(st.session_state.get('t_block_e1x'), 
+                                                    st.session_state.get('t_block_e1y'), 
+                                                    st.session_state.get('t_block_e1z')), 
+                                                e2=(st.session_state.get('t_block_e2x'), 
+                                                    st.session_state.get('t_block_e2y'), 
+                                                    st.session_state.get('t_block_e2z')),
+                                                e3=(st.session_state.get('t_block_e3x'),
+                                                    st.session_state.get('t_block_e3y'),
+                                                     st.session_state.get('t_block_e3z')), 
+                                                color=temp_geo_color, name=st.session_state.get('tg_name')+" (Ellipsoid)" if " (Ellipsoid)" not in st.session_state.get('tg_name') else st.session_state.get('tg_name'),
+                                                material=temp_geo_mat)
                 else:
-                    st.session_state.geoms.append(
-                        Block(center=tuple(temp_geo_center), 
-                              size=(st.session_state.get('t_block_sx'),
-                                    st.session_state.get('t_block_sy'), 
-                                    st.session_state.get('t_block_sz')), 
-                                    e1=(st.session_state.get('t_block_e1x'), 
-                                        st.session_state.get('t_block_e1y'), 
-                                        st.session_state.get('t_block_e1z')), 
-                                    e2=(st.session_state.get('t_block_e2x'), 
-                                        st.session_state.get('t_block_e2y'), 
-                                        st.session_state.get('t_block_e2z')),
-                                    e3=(st.session_state.get('t_block_e3x'),
-                                        st.session_state.get('t_block_e3y'),
-                                         st.session_state.get('t_block_e3z')), 
-                                    color="blue", name=st.session_state.get('tg_name')+" (Block)",
-                                    material=temp_geo_mat))
+                    new_geom = Block(center=tuple(temp_geo_center), 
+                                     size=(st.session_state.get('t_block_sx'),
+                                           st.session_state.get('t_block_sy'), 
+                                           st.session_state.get('t_block_sz')), 
+                                           e1=(st.session_state.get('t_block_e1x'), 
+                                               st.session_state.get('t_block_e1y'), 
+                                               st.session_state.get('t_block_e1z')), 
+                                           e2=(st.session_state.get('t_block_e2x'), 
+                                               st.session_state.get('t_block_e2y'), 
+                                               st.session_state.get('t_block_e2z')),
+                                           e3=(st.session_state.get('t_block_e3x'),
+                                               st.session_state.get('t_block_e3y'),
+                                                st.session_state.get('t_block_e3z')), 
+                                           color=temp_geo_color, name=st.session_state.get('tg_name')+" (Block)" if " (Block)" not in st.session_state.get('tg_name') else st.session_state.get('tg_name'),
+                                           material=temp_geo_mat)
                     
             if temp_geo_type == "Cylinder":
                 if st.session_state.get("t_cylinder_subclass"):
                     if st.session_state.get('t_cylinder_subclass_type') == "Cone":
-                        st.session_state.geoms.append(
-                            Cone(center=tuple(temp_geo_center), 
-                                 radius=st.session_state.get('t_cylinder_r'), 
-                                 height=st.session_state.get('t_cylinder_h'), 
-                                 axis=(st.session_state.get('t_cylinder_axis_x'), 
-                                       st.session_state.get('t_cylinder_axis_y'), 
-                                       st.session_state.get('t_cylinder_axis_z')), 
-                                 radius1=st.session_state.get('t_cylinder_radius2'),
-                                 color="blue", name=st.session_state.get('tg_name')+" (Cone)",
-                                 material=temp_geo_mat)
-                        )
+                        new_geom = Cone(center=tuple(temp_geo_center), 
+                                        radius=st.session_state.get('t_cylinder_r'), 
+                                        height=st.session_state.get('t_cylinder_h'), 
+                                        axis=(st.session_state.get('t_cylinder_axis_x'), 
+                                              st.session_state.get('t_cylinder_axis_y'), 
+                                              st.session_state.get('t_cylinder_axis_z')), 
+                                        radius1=st.session_state.get('t_cylinder_radius2'),
+                                        color=temp_geo_color, name=st.session_state.get('tg_name')+" (Cone)" if " (Cone)" not in st.session_state.get('tg_name') else st.session_state.get('tg_name'),
+                                        material=temp_geo_mat)
                     if st.session_state.get('t_cylinder_subclass_type') == "Wedge":
-                        st.session_state.geoms.append(
-                            Wedge(center=tuple(temp_geo_center), 
-                                   radius=st.session_state.get('t_cylinder_r'), 
-                                   height=st.session_state.get('t_cylinder_h'), 
-                                   axis=(st.session_state.get('t_cylinder_axis_x'), 
-                                         st.session_state.get('t_cylinder_axis_y'), 
-                                         st.session_state.get('t_cylinder_axis_z')), 
-                                   wedge_angle=st.session_state.get('t_cylinder_wedge_angle'),
-                                   wedge_start=(st.session_state.get('t_cylinder_wedge_x'), 
-                                                 st.session_state.get('t_cylinder_wedge_y'), 
-                                                 st.session_state.get('t_cylinder_wedge_z')),
-                                   color="blue", name=st.session_state.get('tg_name')+" (Wedge)",
-                                   material=temp_geo_mat)
-                        )
+                        new_geom = Wedge(center=tuple(temp_geo_center), 
+                                         radius=st.session_state.get('t_cylinder_r'), 
+                                         height=st.session_state.get('t_cylinder_h'), 
+                                         axis=(st.session_state.get('t_cylinder_axis_x'), 
+                                               st.session_state.get('t_cylinder_axis_y'), 
+                                               st.session_state.get('t_cylinder_axis_z')), 
+                                         wedge_angle=st.session_state.get('t_cylinder_wedge_angle'),
+                                         wedge_start=(st.session_state.get('t_cylinder_wedge_x'), 
+                                                       st.session_state.get('t_cylinder_wedge_y'), 
+                                                       st.session_state.get('t_cylinder_wedge_z')),
+                                         color=temp_geo_color, name=st.session_state.get('tg_name')+" (Wedge)" if " (Wedge)" not in st.session_state.get('tg_name') else st.session_state.get('tg_name'),
+                                         material=temp_geo_mat)
 
                 else:
-                    st.session_state.geoms.append(
-                        Cylinder(center=tuple(temp_geo_center), 
-                                 radius=st.session_state.get('t_cylinder_r'), 
-                                 height=st.session_state.get('t_cylinder_h'), 
-                                 axis=(st.session_state.get('t_cylinder_axis_x'), 
-                                       st.session_state.get('t_cylinder_axis_y'), 
-                                       st.session_state.get('t_cylinder_axis_z')), 
-                                 color="blue", name=st.session_state.get('tg_name')+" (Cylinder)",
-                                 material=temp_geo_mat)
-                    )
-
-            
+                    new_geom = Cylinder(center=tuple(temp_geo_center), 
+                                        radius=st.session_state.get('t_cylinder_r'), 
+                                        height=st.session_state.get('t_cylinder_h'), 
+                                        axis=(st.session_state.get('t_cylinder_axis_x'), 
+                                              st.session_state.get('t_cylinder_axis_y'), 
+                                              st.session_state.get('t_cylinder_axis_z')), 
+                                        color=temp_geo_color, name=st.session_state.get('tg_name')+" (Cylinder)" if " (Cylinder)" not in st.session_state.get('tg_name') else st.session_state.get('tg_name'),
+                                        material=temp_geo_mat)
 
             if temp_geo_type == "Prism":
-                st.session_state.geoms.append(
-                    Prism(center=tuple(temp_geo_center),
-                          height=st.session_state.get('t_prism_h'),
-                          axis=(st.session_state.get('t_prism_axis_x'), 
-                                st.session_state.get('t_prism_axis_y'), 
-                                st.session_state.get('t_prism_axis_z')),
-                          sidewall_angle=st.session_state.get('t_prism_sidewall_angle'),
-                          vertices=st.session_state.get('t_prism_vertices'),
-                          shift_center = (
-                              st.session_state.get('t_prism_center_x'),
-                              st.session_state.get('t_prism_center_y'),
-                              st.session_state.get('t_prism_center_z'),
-                              
-                          ) if st.session_state.get("t_prism_center_checkbox") else None, 
-                          color="blue", name=st.session_state.get('tg_name')+" (Prism)",
-                          material=temp_geo_mat)
-                )
-            clear_temp()
-            st.rerun()
+                new_geom = Prism(center=tuple(temp_geo_center),
+                                 height=st.session_state.get('t_prism_h'),
+                                 prism_axis=(st.session_state.get('t_prism_axis_x'), 
+                                             st.session_state.get('t_prism_axis_y'), 
+                                             st.session_state.get('t_prism_axis_z')),
+                                 sidewall_angle=st.session_state.get('t_prism_sidewall_angle'),
+                                 vertices_list=st.session_state.get('t_prism_vertices'),
+                                 shift_center = (
+                                     st.session_state.get('t_prism_center_x'),
+                                     st.session_state.get('t_prism_center_y'),
+                                     st.session_state.get('t_prism_center_z'),
+                                 ) if st.session_state.get("t_prism_center_checkbox") else None, 
+                                 color=temp_geo_color, name=st.session_state.get('tg_name')+" (Prism)" if " (Prism)" not in st.session_state.get('tg_name') else st.session_state.get('tg_name'),
+                                 material=temp_geo_mat)
+            if new_geom is not None:
+                valid, err = _validate_geom(new_geom)
+                if valid:
+                    if edit_idx is not None and 0 <= edit_idx < len(st.session_state.geoms):
+                        st.session_state.geoms[edit_idx] = new_geom
+                    else:
+                        st.session_state.geoms.append(new_geom)
+                        st.toast(f"**Geometry {new_geom.name} added.**", icon="✔️")
+                    clear_temp()
+                    st.rerun()
+                else:
+                    st.toast(f"**Invalid geometry:** {err}", icon="⚠️")
 
 
     with geo_right:
@@ -341,70 +489,70 @@ def add_geometry(old_cfg=None):
             st.error("Please specify geometry type.")
         else:
             if temp_geo_type == "Sphere":
-                temp_radius = st.number_input("Radius", value=None,key="t_sphere_r")
+                temp_radius = st.number_input("Radius", value=default_sphere_r,key="t_sphere_r")
             elif temp_geo_type == "Block":
                 size_x,size_y,size_z= st.columns(3)
                 temp_s = [None]*3
-                temp_s[0] = size_x.number_input("Size",label_visibility ='visible',placeholder="Size X",value=None,key="t_block_sx")
-                temp_s[1] = size_y.number_input("Size",label_visibility ='hidden',placeholder="Size Y",value=None,key="t_block_sy")
-                temp_s[2] = size_z.number_input("Size",label_visibility ='hidden',placeholder="Size Z",value=None,key="t_block_sz")
+                temp_s[0] = size_x.number_input("Size",label_visibility ='visible',placeholder="Size X",value=default_block_sx,key="t_block_sx")
+                temp_s[1] = size_y.number_input("Size",label_visibility ='hidden',placeholder="Size Y",value=default_block_sy,key="t_block_sy")
+                temp_s[2] = size_z.number_input("Size",label_visibility ='hidden',placeholder="Size Z",value=default_block_sz,key="t_block_sz")
                 with st.expander("Block axes", expanded=False):
                     axes_x,axes_y,axes_z = st.columns(3)
                     temp_e1 = [None]*3
                     temp_e2 = [None]*3
                     temp_e3 = [None]*3
-                    temp_e1[0] = axes_x.number_input(r"$\vec{e_1}$",label_visibility ='visible',placeholder="X",value=1.0,key="t_block_e1x")
-                    temp_e1[1] = axes_y.number_input(r"$\vec{e_1}$",label_visibility ='hidden',placeholder="Y",value=0.0,key="t_block_e1y")
-                    temp_e1[2] = axes_z.number_input(r"$\vec{e_1}$",label_visibility ='hidden',placeholder="Z",value=0.0,key="t_block_e1z")
-                    temp_e2[0] = axes_x.number_input(r"$\vec{e_2}$",label_visibility ='visible',placeholder="X",value=0.0,key="t_block_e2x")
-                    temp_e2[1] = axes_y.number_input(r"$\vec{e_2}$",label_visibility ='hidden',placeholder="Y",value=1.0,key="t_block_e2y")
-                    temp_e2[2] = axes_z.number_input(r"$\vec{e_2}$",label_visibility ='hidden',placeholder="Z",value=0.0,key="t_block_e2z")
-                    temp_e3[0] = axes_x.number_input(r"$\vec{e_3}$",label_visibility ='visible',placeholder="X",value=0.0,key="t_block_e3x")
-                    temp_e3[1] = axes_y.number_input(r"$\vec{e_3}$",label_visibility ='hidden',placeholder="Y",value=0.0,key="t_block_e3y")
-                    temp_e3[2] = axes_z.number_input(r"$\vec{e_3}$",label_visibility ='hidden',placeholder="Z",value=1.0,key="t_block_e3z")
-                ellipsoid = st.checkbox("Make it Ellipsoid", value=False,key="t_block_ellipsoid")
+                    temp_e1[0] = axes_x.number_input(r"$\vec{e_1}$",label_visibility ='visible',placeholder="X",value=default_block_e1[0],key="t_block_e1x")
+                    temp_e1[1] = axes_y.number_input(r"$\vec{e_1}$",label_visibility ='hidden',placeholder="Y",value=default_block_e1[1],key="t_block_e1y")
+                    temp_e1[2] = axes_z.number_input(r"$\vec{e_1}$",label_visibility ='hidden',placeholder="Z",value=default_block_e1[2],key="t_block_e1z")
+                    temp_e2[0] = axes_x.number_input(r"$\vec{e_2}$",label_visibility ='visible',placeholder="X",value=default_block_e2[0],key="t_block_e2x")
+                    temp_e2[1] = axes_y.number_input(r"$\vec{e_2}$",label_visibility ='hidden',placeholder="Y",value=default_block_e2[1],key="t_block_e2y")
+                    temp_e2[2] = axes_z.number_input(r"$\vec{e_2}$",label_visibility ='hidden',placeholder="Z",value=default_block_e2[2],key="t_block_e2z")
+                    temp_e3[0] = axes_x.number_input(r"$\vec{e_3}$",label_visibility ='visible',placeholder="X",value=default_block_e3[0],key="t_block_e3x")
+                    temp_e3[1] = axes_y.number_input(r"$\vec{e_3}$",label_visibility ='hidden',placeholder="Y",value=default_block_e3[1],key="t_block_e3y")
+                    temp_e3[2] = axes_z.number_input(r"$\vec{e_3}$",label_visibility ='hidden',placeholder="Z",value=default_block_e3[2],key="t_block_e3z")
+                ellipsoid = st.checkbox("Make it Ellipsoid", value=default_block_ellipsoid,key="t_block_ellipsoid")
 
             elif temp_geo_type == "Cylinder":
-                temp_radius = st.number_input("Radius", value=None,key="t_cylinder_r")
-                temp_height = st.number_input("Height", value=None,key="t_cylinder_h")
+                temp_radius = st.number_input("Radius", value=default_cylinder_r,key="t_cylinder_r")
+                temp_height = st.number_input("Height", value=default_cylinder_h,key="t_cylinder_h")
                 with st.expander("Cylinder axis", expanded=False):
                     axis_x,axis_y,axis_z = st.columns(3)
                     temp_cylinder_axis = [None]*3
-                    temp_cylinder_axis[0] = axis_x.number_input("Axis",label_visibility ='visible',placeholder="X",value=0.0,key="t_cylinder_axis_x")
-                    temp_cylinder_axis[1] = axis_y.number_input("Axis",label_visibility ='hidden',placeholder="Y",value=0.0,key="t_cylinder_axis_y")
-                    temp_cylinder_axis[2] = axis_z.number_input("Axis",label_visibility ='hidden',placeholder="Z",value=1.0,key="t_cylinder_axis_z")
+                    temp_cylinder_axis[0] = axis_x.number_input("Axis",label_visibility ='visible',placeholder="X",value=default_cylinder_axis[0],key="t_cylinder_axis_x")
+                    temp_cylinder_axis[1] = axis_y.number_input("Axis",label_visibility ='hidden',placeholder="Y",value=default_cylinder_axis[1],key="t_cylinder_axis_y")
+                    temp_cylinder_axis[2] = axis_z.number_input("Axis",label_visibility ='hidden',placeholder="Z",value=default_cylinder_axis[2],key="t_cylinder_axis_z")
 
                 with st.expander("Subclass", expanded=False):
 
-                    if st.checkbox("Make it subclass", value=False,key="t_cylinder_subclass"):
-                        subs = st.radio("Subclass type", ["Cone", "Wedge"],key="t_cylinder_subclass_type")
+                    if st.checkbox("Make it subclass", value=default_cylinder_subclass,key="t_cylinder_subclass"):
+                        subs = st.radio("Subclass type", ["Cone", "Wedge"],key="t_cylinder_subclass_type", index=0 if default_cylinder_subclass_type == "Cone" else 1)
 
                         if subs == "Cone":
-                            radius2 = st.number_input("Top radius", value=None,key="t_cylinder_radius2")
+                            radius2 = st.number_input("Top radius", value=default_cylinder_radius2,key="t_cylinder_radius2")
                         if subs == "Wedge":
-                            angle = st.number_input("Wedge angle",placeholder='Degree or radian in unit of pi', value=None,key="t_cylinder_wedge_angle")
+                            angle = st.number_input("Wedge angle",placeholder='Degree or radian in unit of pi', value=default_cylinder_wedge_angle,key="t_cylinder_wedge_angle")
                             wedge_vec_x, wedge_vec_y, wedge_vec_z = st.columns(3)
                             temp_wedge_vec = [None]*3
-                            temp_wedge_vec[0] = wedge_vec_x.number_input("Wedge vector",label_visibility ='visible',placeholder="X",value=1.0,key="t_cylinder_wedge_x")
-                            temp_wedge_vec[1] = wedge_vec_y.number_input("Wedge vector",label_visibility ='hidden',placeholder="Y",value=0.0,key="t_cylinder_wedge_y")
-                            temp_wedge_vec[2] = wedge_vec_z.number_input("Wedge vector",label_visibility ='hidden',placeholder="Z",value=0.0,key="t_cylinder_wedge_z")
+                            temp_wedge_vec[0] = wedge_vec_x.number_input("Wedge vector",label_visibility ='visible',placeholder="X",value=default_cylinder_wedge_vec[0],key="t_cylinder_wedge_x")
+                            temp_wedge_vec[1] = wedge_vec_y.number_input("Wedge vector",label_visibility ='hidden',placeholder="Y",value=default_cylinder_wedge_vec[1],key="t_cylinder_wedge_y")
+                            temp_wedge_vec[2] = wedge_vec_z.number_input("Wedge vector",label_visibility ='hidden',placeholder="Z",value=default_cylinder_wedge_vec[2],key="t_cylinder_wedge_z")
             elif temp_geo_type == "Prism":
-                vertices = st.text_area("Vertices list", value="123", placeholder="Enter vertices as (x,y,z) per line. They must lie in a plane that's perpendicular to the axis.",key="t_prism_vertices")
-                temp_height = st.number_input("Height", value=None,key="t_prism_h")
+                vertices = st.text_area("Vertices list", value=default_prism_vertices or "", placeholder="Enter vertices as (x,y,z) per line. They must lie in a plane that's perpendicular to the axis.",key="t_prism_vertices")
+                temp_height = st.number_input("Height", value=default_prism_h,key="t_prism_h")
                 with st.expander("Prism axis", expanded=False):
                     axis_x,axis_y,axis_z = st.columns(3)
                     temp_prism_axis = [None]*3
-                    temp_prism_axis[0] = axis_x.number_input("Axis",label_visibility ='visible',placeholder="X",value=0.0,key="t_prism_axis_x")
-                    temp_prism_axis[1] = axis_y.number_input("Axis",label_visibility ='hidden',placeholder="Y",value=0.0,key="t_prism_axis_y")
-                    temp_prism_axis[2] = axis_z.number_input("Axis",label_visibility ='hidden',placeholder="Z",value=1.0,key="t_prism_axis_z")
+                    temp_prism_axis[0] = axis_x.number_input("Axis",label_visibility ='visible',placeholder="X",value=default_prism_axis[0],key="t_prism_axis_x")
+                    temp_prism_axis[1] = axis_y.number_input("Axis",label_visibility ='hidden',placeholder="Y",value=default_prism_axis[1],key="t_prism_axis_y")
+                    temp_prism_axis[2] = axis_z.number_input("Axis",label_visibility ='hidden',placeholder="Z",value=default_prism_axis[2],key="t_prism_axis_z")
                 with st.expander("Center and angle", expanded=False):
-                    if st.checkbox("Shift center", value=False,key="t_prism_center_checkbox"):
+                    if st.checkbox("Shift center", value=default_prism_center_checkbox,key="t_prism_center_checkbox"):
                         prism_x, prism_y, prism_z = st.columns(3)
                         temp_prism_center = [None]*3
-                        temp_prism_center[0] = prism_x.number_input("Bottom center",label_visibility ='visible',placeholder="X",value=1.0,key="t_prism_x")
-                        temp_prism_center[1] = prism_y.number_input("Bottom center",label_visibility ='hidden',placeholder="Y",value=0.0,key="t_prism_y")
-                        temp_prism_center[2] = prism_z.number_input("Bottom center",label_visibility ='hidden',placeholder="Z",value=0.0,key="t_prism_z")
-                    temp_sidewall_angle = st.number_input("Sidewall angle",placeholder='Degree or radian in unit of pi', value=0,key="t_prism_sidewall_angle")
+                        temp_prism_center[0] = prism_x.number_input("Bottom center",label_visibility ='visible',placeholder="X",value=default_prism_center[0],key="t_prism_x")
+                        temp_prism_center[1] = prism_y.number_input("Bottom center",label_visibility ='hidden',placeholder="Y",value=default_prism_center[1],key="t_prism_y")
+                        temp_prism_center[2] = prism_z.number_input("Bottom center",label_visibility ='hidden',placeholder="Z",value=default_prism_center[2],key="t_prism_z")
+                    temp_sidewall_angle = st.number_input("Sidewall angle",placeholder='Degree or radian in unit of pi', value=default_prism_sidewall_angle,key="t_prism_sidewall_angle")
                 
 
 
@@ -456,14 +604,13 @@ with st.sidebar:
 
     if st.session_state.active_page == "geometry":
         if st.button("Add geometry", type="primary", width='stretch'):
-            add_geometry()
+            geo_cfg()
 
         
         with st.expander("Geometry list", expanded=True):
             if st.session_state.geoms:
                 for idx, geom in enumerate(st.session_state.geoms):
-                    uid = getattr(geom, 'uid')
-                    card_widget([f"{idx+1}. {geom.name}", geom.material], uid=uid, top=idx==0, bottom=idx==len(st.session_state.geoms)-1)
+                    card_widget(geom, idx=idx, top=idx == 0, bottom=idx == len(st.session_state.geoms) - 1)
             else:
                 st.info("No geometries added yet.")
 
@@ -478,29 +625,28 @@ with st.sidebar:
 tab_view, tab_res = st.tabs(["3D viewer", "Results"])
 with tab_view:
     fig = go.Figure()
-    dummy_block_trace_b = geo_trace_checker(
-        Ellipsoid(center=(0, 0, 0), size=(1, 1.5, 0.8), e1=(1, 0, 0), e2=(0, 1, 0), e3=(0, 0, 1), color="red", name="Dummy Block B (Ellipsoid)",material="Si")
-    )
-    dummy_block_trace_c = geo_trace_checker(
-    Block(center=(0, -1.5, 0), size=(1.2, 0.4, 0.8), e1=(1, 0.5, 0), e2=(0, 1, 0), e3=(0, 0, 1), color="green", name="Dummy Block C (Cut)",material="Si")
-    )
-    fig.add_traces(dummy_block_trace_b)
-    fig.add_traces(dummy_block_trace_c)
+    for geom in st.session_state.geoms:
+        traces = geo_trace_checker(geom)
+        if isinstance(traces, list):
+            fig.add_traces(traces)
+        else:
+            fig.add_trace(traces)
+
     fig.update_layout(
-    scene=dict(
-        xaxis_title='X (um)',
-        yaxis_title='Y (um)',
-        zaxis_title='Z (um)',
-        # 核心：确保 3D 物理比例 1:1:1，否则球体会变成橄榄球
-        aspectmode='data',
-        camera=dict(
-            eye=dict(x=1.8, y=1.8, z=1.2) # 设置默认视角
-        )
-    ),
-    margin=dict(l=0, r=0, b=0, t=60),
-    legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
+        scene=dict(
+            xaxis_title='X (um)',
+            yaxis_title='Y (um)',
+            zaxis_title='Z (um)',
+            aspectmode='data',
+            camera=dict(
+                eye=dict(x=1.8, y=1.8, z=1.2)
+            )
+        ),
+        margin=dict(l=0, r=0, b=0, t=60),
+        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
     )
-    st.plotly_chart(fig, width = 'stretch',height= 'stretch')
+
+    st.plotly_chart(fig, width='stretch', height='stretch')
 
 
 
