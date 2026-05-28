@@ -1,0 +1,5 @@
+requests
+numpy
+plotly
+scipy
+streamlit-sortables
