@@ -194,116 +194,119 @@ from scipy.spatial import distance
 def get_meep_prism_mesh(vertices_list, height, prism_axis, sidewall_angle, 
                         bottom_center=None, color="purple", name="Prism"):
     """
-    专门用于生成 Meep Prism 的 Plotly Trace (go.Mesh3d)
+    专门用于生成 Meep Prism 的 Plotly Trace (go.Surface)
     """
-    pts = np.array(vertices_list) # (N, 2)
+    pts = np.array(vertices_list)  # (N, 2)
     N = len(pts)
     if N < 3:
         raise ValueError("Prism base must have at least 3 vertices.")
-    
+
     # 1. 计算底面几何中心并对齐到 bottom_center
     geom_center_2d = np.mean(pts, axis=0)
     if bottom_center is not None:
         bc_3d = np.array(bottom_center)
-        # 局部底面顶点平移，使几何中心在 (0,0,0)
         pts_centered = pts - geom_center_2d
     else:
-        # 如果未提供 bottom_center，默认其几何中心在局部原点
         pts_centered = pts - geom_center_2d
         bc_3d = np.array([0, 0, 0])
 
     # 2. 生成 3D 局部顶点 (Bottom z=0, Top z=height)
-    # 计算侧壁倾斜导致的缩放偏移量
     delta_r = height * np.tan(sidewall_angle)
-    
-    local_vertices = []
-    
-    # 底面顶点 (z=0)
+    bottom_vertices = []
+    top_vertices = []
     for p in pts_centered:
-        local_vertices.append([p[0], p[1], 0])
-        
-    # 顶面顶点 (z=height)
-    for p in pts_centered:
-        # 径向单位向量
+        bottom_vertices.append([p[0], p[1], 0])
         r_norm = np.linalg.norm(p)
-        if r_norm == 0: # 处理顶点就在中心的情况
-            local_vertices.append([0, 0, height])
+        if r_norm == 0:
+            top_vertices.append([0, 0, height])
         else:
             r_unit = p / r_norm
-            # 根据倾斜角缩放：顶面半径 = 底面半径 - delta_r
-            # Meep定义：正角度表示向内收缩 (tapering input)
             scaled_p = p - delta_r * r_unit
-            local_vertices.append([scaled_p[0], scaled_p[1], height])
-            
-    local_vertices = np.array(local_vertices) # (2N, 3)
+            top_vertices.append([scaled_p[0], scaled_p[1], height])
+    bottom_vertices = np.array(bottom_vertices)
+    top_vertices = np.array(top_vertices)
 
     # 3. 应用 Meep Axis 旋转和 Bottom Center 平移
-    # 构建旋转矩阵：将局部 z 轴转到 prism_axis
     z_axis = np.array([0, 0, 1])
     target_axis = np.array(prism_axis)
-    target_axis = target_axis / np.linalg.norm(target_axis) # 归一化
-    
+    target_axis = target_axis / np.linalg.norm(target_axis)
     if np.allclose(z_axis, target_axis):
-        R = np.eye(3) # 无旋转
+        R = np.eye(3)
     elif np.allclose(z_axis, -target_axis):
-        # 旋转 180 度
         R = np.diag([1, -1, -1])
     else:
-        # 使用罗德里格旋转公式计算
         v = np.cross(z_axis, target_axis)
         s = np.linalg.norm(v)
         c = np.dot(z_axis, target_axis)
         I = np.eye(3)
         v_x = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
         R = I + v_x + np.dot(v_x, v_x) * ((1 - c) / (s**2))
-        
-    # 变换到全局坐标：Global = R * Local + Bottom_Center
-    # 注意：这里假设 vertices_list 定义在与 axis 垂直的平面上，
-    # 且 bottom_center 指向底面的几何中心。
-    global_vertices = (R @ local_vertices.T).T + bc_3d
-    
-    # 拆分坐标
-    x, y, z = global_vertices[:, 0], global_vertices[:, 1], global_vertices[:, 2]
 
-    # 4. 构建三角面片索引 (i, j, k)
-    idx_i, idx_j, idx_k = [], [], []
-    
-    # 索引规则：前 N 个是底面，后 N 个是顶面 (即 N 到 2N-1)
-    
-    # A. 侧面三角形 (每个侧面 2 个)
+    global_bottom = (R @ bottom_vertices.T).T + bc_3d
+    global_top = (R @ top_vertices.T).T + bc_3d
+
+    bottom_center_point = np.mean(global_bottom, axis=0)
+    top_center_point = np.mean(global_top, axis=0)
+
+    traces = []
+
+    # 底面 Surface
+    bottom_ring_x = np.append(global_bottom[:, 0], global_bottom[0, 0])
+    bottom_ring_y = np.append(global_bottom[:, 1], global_bottom[0, 1])
+    bottom_ring_z = np.full(N + 1, global_bottom[0, 2])
+    x_bottom = np.vstack([np.full(N + 1, bottom_center_point[0]), bottom_ring_x])
+    y_bottom = np.vstack([np.full(N + 1, bottom_center_point[1]), bottom_ring_y])
+    z_bottom = np.vstack([np.full(N + 1, bottom_center_point[2]), bottom_ring_z])
+    traces.append(go.Surface(
+        x=x_bottom, y=y_bottom, z=z_bottom,
+        colorscale=[[0, color], [1, color]],
+        showscale=False,
+        opacity=OPACITY,
+        name=f"{name} bottom",
+        showlegend=False
+    ))
+
+    # 顶面 Surface
+    top_ring_x = np.append(global_top[:, 0], global_top[0, 0])
+    top_ring_y = np.append(global_top[:, 1], global_top[0, 1])
+    top_ring_z = np.full(N + 1, global_top[0, 2])
+    x_top = np.vstack([np.full(N + 1, top_center_point[0]), top_ring_x])
+    y_top = np.vstack([np.full(N + 1, top_center_point[1]), top_ring_y])
+    z_top = np.vstack([np.full(N + 1, top_center_point[2]), top_ring_z])
+    traces.append(go.Surface(
+        x=x_top, y=y_top, z=z_top,
+        colorscale=[[0, color], [1, color]],
+        showscale=False,
+        opacity=OPACITY,
+        name=f"{name} top",
+        showlegend=False
+    ))
+
+    # 侧面 Surface
     for i in range(N):
-        next_i = (i + 1) % N
-        # 侧面 1 (底i, 底next, 顶i)
-        idx_i.append(i)
-        idx_j.append(next_i)
-        idx_k.append(i + N)
-        # 侧面 2 (底next, 顶next, 顶i)
-        idx_i.append(next_i)
-        idx_j.append(next_i + N)
-        idx_k.append(i + N)
+        j = (i + 1) % N
+        x_side = np.array([
+            [global_bottom[i, 0], global_bottom[j, 0]],
+            [global_top[i, 0], global_top[j, 0]]
+        ])
+        y_side = np.array([
+            [global_bottom[i, 1], global_bottom[j, 1]],
+            [global_top[i, 1], global_top[j, 1]]
+        ])
+        z_side = np.array([
+            [global_bottom[i, 2], global_bottom[j, 2]],
+            [global_top[i, 2], global_top[j, 2]]
+        ])
+        traces.append(go.Surface(
+            x=x_side, y=y_side, z=z_side,
+            colorscale=[[0, color], [1, color]],
+            showscale=False,
+            opacity=OPACITY,
+            name=f"{name} side {i}",
+            showlegend=False
+        ))
 
-    # B. 底面和顶面三角形 (使用“风扇法”简化三角剖分，仅适用于凸多边形)
-    # Meep 的 Prism 通常处理凸多边形，如果需要支持凹多边形，需要用复杂算法
-    for i in range(1, N - 1):
-        # 底面 (0 是中心点，连接 0, i, i+1)
-        idx_i.append(0)
-        idx_j.append(i)
-        idx_k.append(i + 1)
-        # 顶面 (N 是顶面中心点，连接 N, i+N, i+1+N)
-        idx_i.append(N)
-        idx_j.append(i + N)
-        idx_k.append(i + 1 + N)
-
-    return go.Mesh3d(
-        x=x, y=y, z=z, i=idx_i, j=idx_j, k=idx_k,
-        color=color, opacity=OPACITY, name=name,
-        showlegend=True,
-        # 确保面片的法线朝外，这对于 Mesh3d 渲染很重要
-        flatshading=True 
-    )
-
-import numpy as np
-import plotly.graph_objects as go
+    return traces
 
 def get_meep_cylindrical_shape(center, radius, height, axis, 
                                radius1=None, wedge_angle=2*np.pi, 

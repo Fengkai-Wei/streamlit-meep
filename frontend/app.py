@@ -3,7 +3,7 @@ import requests
 import numpy as np
 import plotly.graph_objects as go
 import base64
-from geo import *
+from geo_mesh3d import *
 from streamlit_sortables import sort_items
 from mat import MATERIAL_KEYS
 from utils import clear_temp
@@ -89,7 +89,13 @@ def _validate_geom(geom):
     if isinstance(geom, Block) or isinstance(geom, Ellipsoid):
         if not all(isinstance(v, (int, float)) for v in geom.size):
             return False, "Block / Ellipsoid size values must be numeric(int or float)."
-        if (np.any(np.cross(geom.e1, geom.e2)) and np.any(np.cross(geom.e2, geom.e3)) and np.any(np.cross(geom.e1, geom.e3))):
+        if any(v <= 0 for v in geom.size):
+            return False, "Block / Ellipsoid size values must be greater than 0."
+        if not (
+            np.isclose(np.dot(geom.e1, geom.e2), 0.0, atol=1e-7) and
+            np.isclose(np.dot(geom.e2, geom.e3), 0.0, atol=1e-7) and
+            np.isclose(np.dot(geom.e1, geom.e3), 0.0, atol=1e-7)
+            ):
             return False, "Block / Ellipsoid axes must be mutually perpendicular."
     if isinstance(geom, Cylinder):
         if not isinstance(geom.radius, (int, float)) or geom.radius < 0:
@@ -121,7 +127,6 @@ def _validate_geom(geom):
 def card_widget(geom, idx, top=False, bottom=False):
     key_prefix = f'geolist_{getattr(geom, "uid", idx)}'
     with st.popover(geom.name, width='stretch', key=key_prefix):
-        st.title(geom.name)
         for attr, value in geom.__dict__.items():
             if attr in ['uid', 'name', 'color']:
                 continue
