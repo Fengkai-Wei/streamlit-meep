@@ -21,6 +21,26 @@ def card_widget(obj, obj_type, idx, edit_callback=None, top=False, bottom=False)
         top: Whether this is the top item
         bottom: Whether this is the bottom item
     """
+    # 注入局部 CSS，专门针对 popover 内部的控制按钮
+    st.markdown("""
+        <style>
+            /* 定位 popover 内部的按钮 */
+            div[data-testid="stPopoverBody"] div.stButton > button {
+                background-color: transparent !important;
+                color: #FFFFFF !important; /* 保持主题色图标 */
+                border: none !important;
+                width: auto !important;
+                height: 2rem !important;
+                padding: 0px 8px !important;
+                transform: none !important; /* 禁用全局 CSS 中的位移效果 */
+            }
+            /* 悬停效果：轻微背景色 */
+            div[data-testid="stPopoverBody"] div.stButton > button:hover {
+                transform: scale(1.1) !important;
+            }
+        </style>
+    """, unsafe_allow_html=True)
+
     key_prefix = f'{obj_type}list_{getattr(obj, "uid", idx)}'
     with st.popover(obj.name, width='stretch', key=key_prefix):
         rows = []
@@ -93,4 +113,3 @@ def card_widget(obj, obj_type, idx, edit_callback=None, top=False, bottom=False)
         elif obj_type == 'source':
             st.session_state.sources[idx + 1], st.session_state.sources[idx] = st.session_state.sources[idx], st.session_state.sources[idx + 1]
         st.rerun()
-

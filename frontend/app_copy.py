@@ -99,6 +99,7 @@ with st.sidebar:
             if st.button(button_label, key=f"btn_{label}", use_container_width=True):
                 st.session_state.active_page = label
                 st.rerun()
+    st.divider(width='stretch')
 
     if st.session_state.active_page == "simulation":
         xyz = st.expander("Space setup", expanded=True)
