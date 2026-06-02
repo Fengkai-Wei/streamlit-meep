@@ -3,7 +3,7 @@ import uuid
 import numpy as np
 import plotly.graph_objects as go
 
-OPACITY = 0.7
+OPACITY = 1.0
 
 def grid_to_mesh3d(x, y, z, color, name, opacity=OPACITY, showlegend=False, legendgroup=None):
     """Convert a rectangular grid of points into a Plotly Mesh3d trace."""
@@ -36,33 +36,34 @@ def grid_to_mesh3d(x, y, z, color, name, opacity=OPACITY, showlegend=False, lege
     )
 
 class BasicGeometry:
-    def __init__(self, color, name, material, center):
+    def __init__(self, color, name, material, center, opacity=1.0):
         self.uid = uuid.uuid4().hex
         self.color = color
         self.name = name
         self.material = material
         self.center = center
+        self.opacity = opacity
 
 class Block(BasicGeometry):
-    def __init__(self, color, name, material, center, size, e1, e2, e3):
-        super().__init__(color, name, material, center)
+    def __init__(self, color, name, material, center, size, e1, e2, e3, opacity=1.0):
+        super().__init__(color, name, material, center, opacity=opacity)
         self.size = size
         self.e1 = e1
         self.e2 = e2
         self.e3 = e3
 
 class Ellipsoid(Block):
-    def __init__(self, color, name, material, center, size, e1, e2, e3):
-        super().__init__(color, name, material, center, size, e1, e2, e3)
+    def __init__(self, color, name, material, center, size, e1, e2, e3, opacity=1.0):
+        super().__init__(color, name, material, center, size, e1, e2, e3, opacity=opacity)
 
 class Sphere(BasicGeometry):
-    def __init__(self, color, name, material, center, radius):
-        super().__init__(color, name, material, center)
+    def __init__(self, color, name, material, center, radius, opacity=1.0):
+        super().__init__(color, name, material, center, opacity=opacity)
         self.radius = radius
 
 class Prism(BasicGeometry):
-    def __init__(self, color, name, material, center, vertices_list, height, prism_axis, sidewall_angle,shift_center=None):
-        super().__init__(color, name, material, center)
+    def __init__(self, color, name, material, center, vertices_list, height, prism_axis, sidewall_angle, shift_center=None, opacity=1.0):
+        super().__init__(color, name, material, center, opacity=opacity)
         self.vertices_list = vertices_list
         self.height = height
         self.prism_axis = prism_axis
@@ -70,28 +71,28 @@ class Prism(BasicGeometry):
         self.shift_center = shift_center if shift_center is not None else None
 
 class Cylinder(BasicGeometry):
-    def __init__(self, color, name, material, center, radius, height, axis):
-        super().__init__(color, name, material, center)
+    def __init__(self, color, name, material, center, radius, height, axis, opacity=1.0):
+        super().__init__(color, name, material, center, opacity=opacity)
         self.radius = radius
         self.height = height
         self.axis = axis
 
 class Cone(Cylinder):
-    def __init__(self, color, name, material, center, radius, radius1, height, axis):
-        super().__init__(color, name, material, center, radius, height, axis)
+    def __init__(self, color, name, material, center, radius, radius1, height, axis, opacity=1.0):
+        super().__init__(color, name, material, center, radius, height, axis, opacity=opacity)
         self.radius1 = radius1
 
 
 class Wedge(Cylinder):
-    def __init__(self, color, name, material, center, radius, height, axis, wedge_angle, wedge_start):
-        super().__init__(color, name, material, center,radius,height,axis)
+    def __init__(self, color, name, material, center, radius, height, axis, wedge_angle, wedge_start, opacity=1.0):
+        super().__init__(color, name, material, center, radius, height, axis, opacity=opacity)
         self.wedge_angle = wedge_angle
         self.wedge_start = wedge_start 
 
 
 
 
-def get_meep_block_trace(center, size, e1, e2, e3, color="blue", name="Block"):
+def get_meep_block_trace(center, size, e1, e2, e3, color="blue", name="Block", opacity=OPACITY):
     """Generate a Mesh3d trace for a block with given orientation vectors."""
     c = np.array(center)
     s = np.array(size)
@@ -128,11 +129,11 @@ def get_meep_block_trace(center, size, e1, e2, e3, color="blue", name="Block"):
     return go.Mesh3d(
         x=x, y=y, z=z,
         i=list(i), j=list(j), k=list(k),
-        color=color, opacity=OPACITY, name=name,
+        color=color, opacity=opacity, name=name,
         showlegend=True, legendgroup=name,
         flatshading=True
     )
-def get_meep_ellipsoid_trace(center, size, e1, e2, e3, color="red", name="Ellipsoid"):
+def get_meep_ellipsoid_trace(center, size, e1, e2, e3, color="red", name="Ellipsoid", opacity=OPACITY):
     """Generate a Mesh3d trace for an oriented ellipsoid using basis vectors."""
     c = np.array(center)
     radii = np.array(size) / 2.0
@@ -154,21 +155,21 @@ def get_meep_ellipsoid_trace(center, size, e1, e2, e3, color="red", name="Ellips
     y = global_coords[:, 1].reshape(theta.shape)
     z = global_coords[:, 2].reshape(theta.shape)
 
-    return grid_to_mesh3d(x, y, z, color=color, name=name, showlegend=True, legendgroup=name)
+    return grid_to_mesh3d(x, y, z, color=color, name=name, opacity=opacity, showlegend=True, legendgroup=name)
 
-def get_meep_sphere(center, radius, color="green", name="Sphere", resolution=30):
+def get_meep_sphere(center, radius, color="green", name="Sphere", resolution=30, opacity=OPACITY):
     """Generate a Mesh3d trace for a sphere by delegating to the ellipsoid generator."""
     return get_meep_ellipsoid_trace(
         center, [2 * radius, 2 * radius, 2 * radius],
         [1, 0, 0], [0, 1, 0], [0, 0, 1],
-        color=color, name=name
+        color=color, name=name, opacity=opacity
     )
 
 
 from scipy.spatial import distance
 
 def get_meep_prism_mesh(vertices_list, height, prism_axis, sidewall_angle, 
-                        bottom_center=None, color="purple", name="Prism"):
+                        bottom_center=None, color="purple", name="Prism", opacity=OPACITY):
     """
     专门用于生成 Meep Prism 的 Plotly Trace (go.Mesh3d)
     """
@@ -272,7 +273,7 @@ def get_meep_prism_mesh(vertices_list, height, prism_axis, sidewall_angle,
 
     return go.Mesh3d(
         x=x, y=y, z=z, i=idx_i, j=idx_j, k=idx_k,
-        color=color, opacity=OPACITY, name=name,
+        color=color, opacity=opacity, name=name,
         showlegend=True,
         # 确保面片的法线朝外，这对于 Mesh3d 渲染很重要
         flatshading=True 
@@ -283,7 +284,7 @@ import plotly.graph_objects as go
 
 def get_meep_cylindrical_shape(center, radius, height, axis, 
                                radius1=None, wedge_angle=2*np.pi, 
-                               wedge_start=(1,0,0), color="cyan", name="Cylindrial shape"):
+                               wedge_start=(1,0,0), color="cyan", name="Cylindrial shape", opacity=OPACITY):
     """Generate Mesh3d traces for a cylinder, cone, or wedge-shaped body."""
     c = np.array(center)
     h = height
@@ -324,7 +325,7 @@ def get_meep_cylindrical_shape(center, radius, height, axis,
 
     traces = []
     x_g, y_g, z_g = transform_table(x_loc, y_loc, z_loc)
-    traces.append(grid_to_mesh3d(x_g, y_g, z_g, color=color, name=name, showlegend=True, legendgroup=name))
+    traces.append(grid_to_mesh3d(x_g, y_g, z_g, color=color, name=name, opacity=opacity, showlegend=True, legendgroup=name))
 
     r_grid_bottom = np.linspace(0, r0, res_r)
     U_grid_bottom, R_grid_bottom = np.meshgrid(u, r_grid_bottom)
@@ -332,7 +333,7 @@ def get_meep_cylindrical_shape(center, radius, height, axis,
     y_bottom = R_grid_bottom * np.sin(U_grid_bottom)
     z_bottom = np.full_like(x_bottom, -h / 2)
     x_g, y_g, z_g = transform_table(x_bottom, y_bottom, z_bottom)
-    traces.append(grid_to_mesh3d(x_g, y_g, z_g, color=color, name=f"{name} bottom", showlegend=False, legendgroup=name))
+    traces.append(grid_to_mesh3d(x_g, y_g, z_g, color=color, name=f"{name} bottom", opacity=opacity, showlegend=False, legendgroup=name))
 
     r_grid_top = np.linspace(0, r1, res_r)
     U_grid_top, R_grid_top = np.meshgrid(u, r_grid_top)
@@ -340,7 +341,7 @@ def get_meep_cylindrical_shape(center, radius, height, axis,
     y_top = R_grid_top * np.sin(U_grid_top)
     z_top = np.full_like(x_top, h / 2)
     x_g, y_g, z_g = transform_table(x_top, y_top, z_top)
-    traces.append(grid_to_mesh3d(x_g, y_g, z_g, color=color, name=f"{name} top", showlegend=False, legendgroup=name))
+    traces.append(grid_to_mesh3d(x_g, y_g, z_g, color=color, name=f"{name} top", opacity=opacity, showlegend=False, legendgroup=name))
 
     if wedge_angle < 2 * np.pi - 1e-6:
         r_edge = np.linspace(0, 1, res_r)
@@ -358,40 +359,40 @@ def get_meep_cylindrical_shape(center, radius, height, axis,
                 np.full_like(r_edge, h / 2)
             ])
             x_g, y_g, z_g = transform_table(x_edge, y_edge, z_edge)
-            traces.append(grid_to_mesh3d(x_g, y_g, z_g, color=color, name=f"{name} {edge_label}", showlegend=False, legendgroup=name))
+            traces.append(grid_to_mesh3d(x_g, y_g, z_g, color=color, name=f"{name} {edge_label}", opacity=opacity, showlegend=False, legendgroup=name))
 
     return traces
 
-def get_meep_cylinder(center, radius, height, axis, color="blue", name="Cylinder"):
-    return get_meep_cylindrical_shape(center, radius, height, axis, color=color, name=name)
+def get_meep_cylinder(center, radius, height, axis, color="blue", name="Cylinder", opacity=OPACITY):
+    return get_meep_cylindrical_shape(center, radius, height, axis, color=color, name=name, opacity=opacity)
 
-def get_meep_cone(center, radius, radius1, height, axis, color="orange", name="Cone"):
-    return get_meep_cylindrical_shape(center, radius, height, axis, radius1=radius1, color=color, name=name)
+def get_meep_cone(center, radius, radius1, height, axis, color="orange", name="Cone", opacity=OPACITY):
+    return get_meep_cylindrical_shape(center, radius, height, axis, radius1=radius1, color=color, name=name, opacity=opacity)
 
-def get_meep_wedge(center, radius, height, axis, wedge_angle, wedge_start, color="yellow", name="Wedge"):
+def get_meep_wedge(center, radius, height, axis, wedge_angle, wedge_start, color="yellow", name="Wedge", opacity=OPACITY):
     # 注意：Wedge 在 Meep 中通常也是一个圆柱体的一部分
     return get_meep_cylindrical_shape(
         center, radius, height, axis, 
         wedge_angle=wedge_angle, 
         wedge_start=wedge_start, 
-        color=color, name=name
+        color=color, name=name, opacity=opacity
     )
 
 def geo_trace_checker(obj: BasicGeometry):
     if isinstance(obj, Ellipsoid):
-        return get_meep_ellipsoid_trace(obj.center, obj.size, obj.e1, obj.e2, obj.e3, color=obj.color, name=obj.name)
+        return get_meep_ellipsoid_trace(obj.center, obj.size, obj.e1, obj.e2, obj.e3, color=obj.color, name=obj.name, opacity=obj.opacity)
     elif isinstance(obj, Block):
-        return get_meep_block_trace(obj.center, obj.size, obj.e1, obj.e2, obj.e3, color=obj.color, name=obj.name)
+        return get_meep_block_trace(obj.center, obj.size, obj.e1, obj.e2, obj.e3, color=obj.color, name=obj.name, opacity=obj.opacity)
     elif isinstance(obj, Sphere):
-        return get_meep_sphere(obj.center, obj.radius, color=obj.color, name=obj.name)
+        return get_meep_sphere(obj.center, obj.radius, color=obj.color, name=obj.name, opacity=obj.opacity)
     elif isinstance(obj, Prism):
         return get_meep_prism_mesh(obj.vertices_list, obj.height, obj.prism_axis, obj.sidewall_angle, 
-                                   bottom_center=obj.center, color=obj.color, name=obj.name)
+                                   bottom_center=obj.center, color=obj.color, name=obj.name, opacity=obj.opacity)
     elif isinstance(obj, Wedge):
-        return get_meep_wedge(obj.center, obj.radius, obj.height, obj.axis, wedge_angle=obj.wedge_angle, wedge_start=obj.wedge_start, color=obj.color, name=obj.name)
+        return get_meep_wedge(obj.center, obj.radius, obj.height, obj.axis, wedge_angle=obj.wedge_angle, wedge_start=obj.wedge_start, color=obj.color, name=obj.name, opacity=obj.opacity)
     elif isinstance(obj, Cone):
-        return get_meep_cone(obj.center, obj.radius, obj.radius1, obj.height, obj.axis, color=obj.color, name=obj.name)
+        return get_meep_cone(obj.center, obj.radius, obj.radius1, obj.height, obj.axis, color=obj.color, name=obj.name, opacity=obj.opacity)
     elif isinstance(obj, Cylinder):
-        return get_meep_cylinder(obj.center, obj.radius, obj.height, obj.axis, color=obj.color, name=obj.name)
+        return get_meep_cylinder(obj.center, obj.radius, obj.height, obj.axis, color=obj.color, name=obj.name, opacity=obj.opacity)
     else:
         raise ValueError(f"Unsupported geometry type: {type(obj)}")

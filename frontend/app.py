@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import numpy as np
+import pandas as pd
 import plotly.graph_objects as go
 import base64
 from geo_mesh3d import *
@@ -91,12 +92,14 @@ def _validate_geom(geom):
             return False, "Block / Ellipsoid size values must be numeric(int or float)."
         if any(v <= 0 for v in geom.size):
             return False, "Block / Ellipsoid size values must be greater than 0."
-        if not (
-            np.isclose(np.dot(geom.e1, geom.e2), 0.0, atol=1e-7) and
-            np.isclose(np.dot(geom.e2, geom.e3), 0.0, atol=1e-7) and
-            np.isclose(np.dot(geom.e1, geom.e3), 0.0, atol=1e-7)
-            ):
-            return False, "Block / Ellipsoid axes must be mutually perpendicular."
+        if (np.all(np.isclose(geom.e1, 0.0, atol=1e-7)) or 
+            np.all(np.isclose(geom.e2, 0.0, atol=1e-7)) or 
+            np.all(np.isclose(geom.e3, 0.0, atol=1e-7))):
+            return False, "Block / Ellipsoid axes cannot be the zero vector."
+        if (np.allclose(np.cross(geom.e1, geom.e2), 0.0, atol=1e-7) or
+            np.allclose(np.cross(geom.e2, geom.e3), 0.0, atol=1e-7) or
+            np.allclose(np.cross(geom.e1, geom.e3), 0.0, atol=1e-7)):
+            return False, "Block / Ellipsoid axes must be mutually non-collinear (cannot be parallel)."
     if isinstance(geom, Cylinder):
         if not isinstance(geom.radius, (int, float)) or geom.radius < 0:
             return False, "Cylinder radius must be a non-negative number."
@@ -127,11 +130,23 @@ def _validate_geom(geom):
 def card_widget(geom, idx, top=False, bottom=False):
     key_prefix = f'geolist_{getattr(geom, "uid", idx)}'
     with st.popover(geom.name, width='stretch', key=key_prefix):
+        rows = []
         for attr, value in geom.__dict__.items():
             if attr in ['uid', 'name', 'color']:
                 continue
-            st.write(f"**{attr}**: {value}")
-        
+            rows.append([attr, value])
+
+        if rows:
+            df = pd.DataFrame(rows, columns=["attribute", "value"])
+            st.table(df,hide_index=True,hide_header=True)
+        else:
+            st.write("No geometry details available.")
+
+        opacity = st.slider("Opacity", min_value=0.0, max_value=1.0, value=getattr(geom, "opacity", 1.0), step=0.05, key=f"{key_prefix}_opacity")
+        if opacity != geom.opacity:
+            geom.opacity = opacity
+            st.session_state.geoms[idx] = geom
+
         with st.container(horizontal=True, border=False, gap='xxsmall'):
             edit_pressed = st.button("⚙️", type="tertiary", key=f'{key_prefix}_edit')
             delete_pressed = st.button("🗑️", type="tertiary", key=f'{key_prefix}_delete')
