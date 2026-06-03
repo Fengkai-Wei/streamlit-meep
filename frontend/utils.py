@@ -46,11 +46,13 @@ def card_widget(obj, obj_type, idx, edit_callback=None, top=False, bottom=False)
         rows = []
         
         # Skip these attributes based on object type
-        skip_attrs = {'uid', 'name', 'color'}
+        skip_attrs = {'uid', 'name', 'color','opacity','volume'}
         if obj_type == 'geometry':
-            skip_attrs.update(['opacity'])
+            #skip_attrs.update(['opacity'])
+            pass
         
         for attr, value in obj.__dict__.items():
+            print(attr,value)
             if attr in skip_attrs:
                 continue
             rows.append([attr, value])
