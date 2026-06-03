@@ -129,7 +129,6 @@ class EigenmodeSource(Source):
         super().__init__(name, color, srct, component=component, center=center, volume=volume, amplitude=amplitude, opacity=opacity, **kwargs)
         self.eig_lattice_size = eig_lattice_size
         self.eig_lattice_center = eig_lattice_center
-        self.eig_vol = eig_vol
         self.direction = direction
         self.eig_band = eig_band
         self.eig_kpoint = eig_kpoint
@@ -393,7 +392,6 @@ def src_cfg(old_cfg=None, edit_idx=None):
                     component=st.session_state.get('t_src_comp_eig'),
                     eig_lattice_size=np.array([st.session_state.get('t_src_eig_lat_sx'), st.session_state.get('t_src_eig_lat_sy'), st.session_state.get('t_src_eig_lat_sz')]),
                     eig_lattice_center=np.array([st.session_state.get('t_src_eig_lat_cx'), st.session_state.get('t_src_eig_lat_cy'), st.session_state.get('t_src_eig_lat_cz')]),
-                    eig_vol=st.session_state.get('t_src_eig_vol'),
                     eig_parity=st.session_state.get('t_src_eig_parity'),
                     eig_match_freq=st.session_state.get('t_src_eig_match_freq'),
                     direction=st.session_state.get('t_src_eig_dir'),

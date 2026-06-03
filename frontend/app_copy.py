@@ -75,6 +75,15 @@ if "sources" not in st.session_state: st.session_state.sources = []
 if "monitors" not in st.session_state: st.session_state.monitors = []
 if "results" not in st.session_state: st.session_state.results = None
 if "active_page" not in st.session_state: st.session_state.active_page = "simulation"
+if 'dialog_toast_msg' not in st.session_state: st.session_state.dialog_toast_msg = None
+
+if st.session_state.dialog_toast_msg:
+    txt, icon, dur = st.session_state.dialog_toast_msg
+    st.toast(txt, icon=icon, duration=dur)
+    st.session_state.dialog_toast_msg = None
+
+
+
 
 # --- UI 布局 ---
 #st.title("🔬 Meep Web Workspace")

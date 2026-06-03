@@ -43,25 +43,58 @@ def card_widget(obj, obj_type, idx, edit_callback=None, top=False, bottom=False)
 
     key_prefix = f'{obj_type}list_{getattr(obj, "uid", idx)}'
     with st.popover(obj.name, width='stretch', key=key_prefix):
-        rows = []
+        main_rows = []
+        sub_rows = []
+        main_rows.append(["Type", type(obj).__name__])
         
         # Skip these attributes based on object type
         skip_attrs = {'uid', 'name', 'color','opacity','volume'}
-        if obj_type == 'geometry':
-            #skip_attrs.update(['opacity'])
-            pass
         
-        for attr, value in obj.__dict__.items():
-            print(attr,value)
+        for attr, value in obj.__dict__.items():         
             if attr in skip_attrs:
                 continue
-            rows.append([attr, value])
+            if obj_type == 'geometry':
+                geo_main_attr = {'material','center'}
+                if attr in geo_main_attr:                 
+                    main_rows.append([attr, value])
+                else:
+                    sub_rows.append([attr, value])
 
-        if rows:
-            df = pd.DataFrame(rows, columns=["attribute", "value"])
-            st.table(df)
-        else:
-            st.write("No details available.")
+            if obj_type == 'source':
+                src_main_attr = {'center','size','amplitude','amp_func','amp_func_file'}
+                if attr in src_main_attr:
+                    main_rows.append([attr, value])
+                else:
+                    sub_rows.append([attr, value])
+        
+        with st.expander("Main details",expanded=True):
+            if main_rows:
+                df_main = pd.DataFrame(main_rows, columns=["attribute", "value"])
+                st.table(df_main)
+            else:
+                st.write("No details available.")
+        if obj_type == 'source':
+            with st.expander("Source-time config"):
+                srct = obj.srct
+                srct_type = type(srct).__name__
+                srct_rows = []
+                srct_rows.append(["Type", srct_type])
+                for attr, value in srct.__dict__.items():
+                    srct_rows.append([attr, value])
+                df_srct = pd.DataFrame(srct_rows, columns=["attribute", "value"])
+                st.table(df_srct)
+
+
+
+
+                
+        with st.expander("Sub details"):
+            if sub_rows:
+                df_sub = pd.DataFrame(sub_rows, columns=["attribute", "value"])
+                st.table(df_sub)
+            else:
+                st.write("No details available.")
+
 
         # Opacity slider for geometry
         if obj_type == 'geometry':

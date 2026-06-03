@@ -678,8 +678,8 @@ def geo_cfg(old_cfg=None, edit_idx=None):
                 if edit_idx is not None and 0 <= edit_idx < len(st.session_state.geoms):
                     st.session_state.geoms[edit_idx] = new_geom
                 else:
-                    st.session_state.geoms.append(new_geom)
-                    st.toast(f"**Geometry {new_geom.name} added.**", icon="✔️")
+                    st.session_state.geoms.append(new_geom)               
+                st.session_state.dialog_toast_msg = (f"**Geometry {new_geom.name} added.**", "✔️",'default')
                 clear_temp()
                 st.rerun()
             else:
