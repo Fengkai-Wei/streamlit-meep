@@ -9,6 +9,299 @@ from utils import clear_temp
 OPACITY = 0.25
 
 
+def src_trace_checker(source):
+    """根据 Source 对象的 center 和 size 生成 Plotly 轨迹。"""
+    if isinstance(source, GaussianSource):
+        return gaussian_trace(source)
+    elif isinstance(source, EigenmodeSource):
+        return eigenmode_trace(source)
+    else:
+        return source_trace(source)
+
+
+def _get_common_source_traces(source):
+    """私有辅助函数：处理所有光源通用的几何形态和 amp_func 热力图绘制。"""
+    traces = []
+    
+    center = np.array([float(x) if x is not None else 0.0 for x in getattr(source, 'center', [0,0,0])])
+    size = np.array([float(x) if x is not None else 0.0 for x in getattr(source, 'size', [0,0,0])])
+    non_zero_thres = 1e-8
+    name = getattr(source, 'name', 'unkonwn')
+    color = getattr(source, 'color', 'yellow')
+    opacity = getattr(source, 'opacity', 0.5)
+    
+    # 计算非零维度的数量
+    active_dims = [i for i, s in enumerate(size) if s > non_zero_thres]
+    dims = len(active_dims)
+    
+    if dims == 0:
+        traces.append(go.Scatter3d(
+            x=[center[0]], y=[center[1]], z=[center[2]],
+            mode='markers',
+            marker=dict(size=5, color=color, symbol='diamond'),
+            opacity=opacity,
+            name=name, showlegend=True
+        ))
+    elif dims == 1:
+        idx = np.argmax(size > non_zero_thres)
+        p0, p1 = center.copy(), center.copy()
+        p0[idx] -= size[idx] / 2
+        p1[idx] += size[idx] / 2
+        traces.append(go.Scatter3d(
+            x=[p0[0], p1[0]], y=[p0[1], p1[1]], z=[p0[2], p1[2]],
+            mode='lines',
+            line=dict(width=6, color=color),
+            opacity=opacity,
+            name=name, showlegend=True
+        ))
+    elif dims == 2:  # 面光源：统一使用 Surface 实现 Heatmap
+        res = 50  # 热力图采样分辨率
+        d1, d2 = active_dims
+        v1 = np.linspace(-size[d1]/2, size[d1]/2, res)
+        v2 = np.linspace(-size[d2]/2, size[d2]/2, res)
+        V1, V2 = np.meshgrid(v1, v2)
+
+        # 构建 3D 坐标阵列
+        X = np.full((res, res), center[0])
+        Y = np.full((res, res), center[1])
+        Z = np.full((res, res), center[2])
+        grids = [X, Y, Z]
+        grids[d1] = center[d1] + V1
+        grids[d2] = center[d2] + V2
+
+        # 计算 amp_func
+        surfacecolor = None
+        customdata = None
+        if getattr(source, 'amp_func', None):
+            amps, phases = [], []
+            # 展开进行批量计算
+            pts_rel = np.zeros((res*res, 3))
+            pts_rel[:, d1] = V1.flatten()
+            pts_rel[:, d2] = V2.flatten()
+            
+            for p in pts_rel:
+                try:
+                    val = complex(source.amp_func(p))
+                    amps.append(abs(val))
+                    phases.append(np.angle(val))
+                except:
+                    amps.append(1.0); phases.append(0.0)
+            
+            surfacecolor = np.array(phases).reshape(res, res)
+            customdata = np.array(amps).reshape(res, res)
+
+        traces.append(go.Surface(
+            x=grids[0], y=grids[1], z=grids[2],
+            surfacecolor=surfacecolor,
+            colorscale='Twilight' if surfacecolor is not None else [[0, color], [1, color]],
+            cmin=-np.pi, cmax=np.pi,
+            opacity=opacity,
+            name=name,
+            showscale=True if surfacecolor is not None else False,
+            colorbar=dict(title="Phase", x=1.1, len=0.5) if surfacecolor is not None else None,
+            customdata=customdata,
+            hovertemplate="Phase: %{surfacecolor:.3f} rad<br>Amp: %{customdata:.3f}<extra></extra>" if customdata is not None else None,
+            showlegend=True
+        ))
+
+    elif dims == 3:  # 体光源：使用 Volume 实现 3D Heatmap
+        res = 50
+        v1 = np.linspace(-size[0]/2, size[0]/2, res)
+        v2 = np.linspace(-size[1]/2, size[1]/2, res)
+        v3 = np.linspace(-size[2]/2, size[2]/2, res)
+        V1, V2, V3 = np.meshgrid(v1, v2, v3)
+        
+        val_field = np.zeros_like(V1)
+        if getattr(source, 'amp_func', None):
+            for i in range(res):
+                for j in range(res):
+                    for k in range(res):
+                        p = np.array([v1[i], v2[j], v3[k]])
+                        val_field[j, i, k] = np.angle(complex(source.amp_func(p)))
+        
+        traces.append(go.Volume(
+            x=(V1 + center[0]).flatten(),
+            y=(V2 + center[1]).flatten(),
+            z=(V3 + center[2]).flatten(),
+            value=val_field.flatten(),
+            isomin=-np.pi, isomax=np.pi,
+            opacity=0.2,
+            surface_count=10,
+            colorscale='Twilight',
+            name=f"{name} (Vol Heatmap)",
+            showscale=False
+        ))
+    return traces
+
+
+def _get_pol_vector_traces(source, vec, color='red', origin=None):
+    """私有辅助函数：绘制偏振方向矢量箭头。"""
+    traces = []
+    if origin is None:
+        origin = np.array([float(x) if x is not None else 0.0 for x in getattr(source, 'center', [0,0,0])])
+    non_zero_thres = 1e-8
+    name = getattr(source, 'name', 'unknown')
+    comp = getattr(source, 'component', 'Ex')
+
+    if np.linalg.norm(vec) > non_zero_thres:
+        vec_norm = (vec / np.linalg.norm(vec)) * 1.0
+        
+        traces.append(go.Scatter3d(
+            x=[origin[0], origin[0] + vec_norm[0]],
+            y=[origin[1], origin[1] + vec_norm[1]],
+            z=[origin[2], origin[2] + vec_norm[2]],
+            mode='lines',
+            line=dict(width=5, color=color),
+            name=f"{name} Pol ({comp})",
+            showlegend=False
+        ))
+
+        traces.append(go.Cone(
+            x=[origin[0] + vec_norm[0]],
+            y=[origin[1] + vec_norm[1]],
+            z=[origin[2] + vec_norm[2]],
+            u=[vec_norm[0]], v=[vec_norm[1]], w=[vec_norm[2]],
+            sizemode="absolute", sizeref=0.3,
+            anchor="tip",
+            showscale=False,
+            colorscale=[[0, color], [1, color]],
+            name="Polarization Head",
+            showlegend=False
+        ))
+    return traces
+
+
+def source_trace(source):
+    """通用 Source 轨迹计算。"""
+    traces = _get_common_source_traces(source)
+    
+    comp = getattr(source, 'component', 'Ex')
+    vec = np.array([0.0, 0.0, 0.0])
+    comp_map = {
+        'Ex': [1,0,0], 'Ey': [0,1,0], 'Ez': [0,0,1],
+        'Hx': [1,0,0], 'Hy': [0,1,0], 'Hz': [0,0,1]
+    }
+    
+    if comp in comp_map:
+        vec = np.array(comp_map[comp], dtype=float)
+
+    traces += _get_pol_vector_traces(source, vec)
+    return traces
+
+
+def eigenmode_trace(source):
+    """EigenmodeSource 轨迹计算。"""
+    # 目前 Eigenmode 的基础显示与 Source 一致
+    return source_trace(source)
+
+
+def gaussian_trace(source):
+    """GaussianSource 轨迹计算，特殊处理 'All' 分量的矢量显示。"""
+    traces = _get_common_source_traces(source)
+    center = np.array([float(x) if x is not None else 0.0 for x in getattr(source, 'center', [0,0,0])])
+    
+    # 提前计算全局焦点坐标 (center + beam_x0)
+    rel_x0 = np.array(getattr(source, 'beam_x0', [0,0,0]), dtype=float)
+    global_x0 = center + rel_x0
+
+    comp = getattr(source, 'component', 'All')
+    vec = np.array([0.0, 0.0, 0.0])
+    comp_map = {'Ex': [1,0,0], 'Ey': [0,1,0], 'Ez': [0,0,1], 'Hx': [1,0,0], 'Hy': [0,1,0], 'Hz': [0,0,1]}
+
+    if comp in comp_map:
+        vec = np.array(comp_map[comp], dtype=float)
+    elif comp == 'All' and hasattr(source, 'beam_E0'):
+        vec = np.array([float(x) if x is not None else 0.0 for x in source.beam_E0])
+
+    # 将偏振矢量箭头起始点设在焦点的全局坐标处
+    traces += _get_pol_vector_traces(source, vec, origin=global_x0)
+
+    # --- 新增：绘制 Gaussian Beam 3D 外壳 ---
+    w0 = getattr(source, 'beam_w0', None)
+    kdir = np.array(getattr(source, 'beam_kdir', [0,0,0]), dtype=float)
+    
+    if w0 and np.linalg.norm(kdir) > 1e-8:
+        # 获取波长 (从 srct 中提取，默认为 1.0)
+        srct = getattr(source, 'srct', None)
+        wl = getattr(srct, 'wavelength', 1.0) or 1.0
+        
+        # 计算瑞利距离 zR = pi * w0^2 / lambda
+        zr = np.pi * (float(w0)**2) / wl
+        
+        # 定义局部坐标系：z 为传播方向，采样范围设为 3 倍瑞利距离
+        z_vals = np.linspace(-3 * zr, 3 * zr, 30)
+        theta_vals = np.linspace(0, 2 * np.pi, 30)
+        Z_loc, Theta = np.meshgrid(z_vals, theta_vals)
+        
+        # 计算随 z 变化的半径 W(z)
+        W = float(w0) * np.sqrt(1 + (Z_loc / zr)**2)
+        X_loc = W * np.cos(Theta)
+        Y_loc = W * np.sin(Theta)
+        
+        # 构建旋转矩阵：将标准 Z 轴 [0,0,1] 旋转至 beam_kdir
+        z_axis = np.array([0, 0, 1])
+        target_k = kdir / np.linalg.norm(kdir)
+        
+        if np.allclose(z_axis, target_k):
+            R = np.eye(3)
+        elif np.allclose(z_axis, -target_k):
+            R = np.diag([1, -1, -1])
+        else:
+            v = np.cross(z_axis, target_k)
+            c = np.dot(z_axis, target_k)
+            s = np.linalg.norm(v)
+            v_x = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+            R = np.eye(3) + v_x + v_x @ v_x * ((1 - c) / (s**2))
+            
+        # 变换到全局坐标
+        pts_loc = np.stack([X_loc.flatten(), Y_loc.flatten(), Z_loc.flatten()])
+        pts_glob = (R @ pts_loc).T + global_x0
+        
+        X_glob = pts_glob[:, 0].reshape(Z_loc.shape)
+        Y_glob = pts_glob[:, 1].reshape(Z_loc.shape)
+        Z_glob = pts_glob[:, 2].reshape(Z_loc.shape)
+
+        # 绘制 kdir 矢量箭头 (蓝色)，起点在 global_x0
+        k_norm = kdir / np.linalg.norm(kdir)
+        traces.append(go.Scatter3d(
+            x=[global_x0[0], global_x0[0] + k_norm[0]],
+            y=[global_x0[1], global_x0[1] + k_norm[1]],
+            z=[global_x0[2], global_x0[2] + k_norm[2]],
+            mode='lines',
+            line=dict(width=5, color='blue'),
+            name=f"{source.name} k-dir",
+            showlegend=False
+        ))
+        traces.append(go.Cone(
+            x=[global_x0[0] + k_norm[0]],
+            y=[global_x0[1] + k_norm[1]],
+            z=[global_x0[2] + k_norm[2]],
+            u=[k_norm[0]], v=[k_norm[1]], w=[k_norm[2]],
+            sizemode="absolute", sizeref=0.3,
+            anchor="tip",
+            showscale=False,
+            colorscale=[[0, 'blue'], [1, 'blue']],
+            name="k-dir Head",
+            showlegend=False
+        ))
+        
+        traces.append(go.Surface(
+            x=X_glob, y=Y_glob, z=Z_glob,
+            colorscale=[[0, 'rgba(0,255,100,0.7)'], [1, 'rgba(0,255,100,0.3)']],
+            showscale=False,
+            name=f"{source.name} Envelope",
+            opacity=0.3,
+            showlegend=False
+        ))
+
+    return traces
+
+
+
+
+
+
+
 
 class CW_srct:
     def __init__(
@@ -88,6 +381,7 @@ class Source:
         amplitude=1.0,
         amp_func=None,
         amp_func_file=None,
+        k_vec = np.array([0, 0, 0]),
         #amp_data=None,
     ):
         self.srct = srct
@@ -258,7 +552,7 @@ def src_cfg(old_cfg=None, edit_idx=None):
 
         if cfg_type == 'EigenmodeSource': 
             default_src_type = 'Eigenmode'
-            default_src_eig_comp = getattr(old_cfg, "component", None)
+            default_src_eig_comp = getattr(old_cfg, "component", 'All')
             default_src_eig_band = getattr(old_cfg, 'eig_band', default_src_eig_band)
             default_src_eig_res = getattr(old_cfg, 'eig_resolution', default_src_eig_res)
             default_src_eig_tol = getattr(old_cfg, 'eig_tolerance', default_src_eig_tol)
@@ -271,7 +565,7 @@ def src_cfg(old_cfg=None, edit_idx=None):
 
         elif cfg_type == 'GaussianSource':
             default_src_type = 'Gaussian'
-            default_src_gau_comp = getattr(old_cfg, "component", None)
+            default_src_gau_comp = getattr(old_cfg, "component", 'All')
             default_src_gau_w0 = getattr(old_cfg, 'beam_w0', None)
             default_src_gau_x0 = list(getattr(old_cfg, 'beam_x0', default_src_gau_x0))
             default_src_gau_kdir = list(getattr(old_cfg, 'beam_kdir', default_src_gau_kdir))
@@ -382,8 +676,6 @@ def src_cfg(old_cfg=None, edit_idx=None):
                 "center": np.array([st.session_state.get('t_src_center_x'), st.session_state.get('t_src_center_y'), st.session_state.get('t_src_center_z')]),
                 "size": np.array([st.session_state.get('t_src_size_x'), st.session_state.get('t_src_size_y'), st.session_state.get('t_src_size_z')]),
                 "amplitude": st.session_state.get('t_src_amp') or 1.0,
-                "amp_func": st.session_state.get('t_src_amp_func') if temp_amp_set == "function" else None,
-                "amp_func_file": upload_file,
             }
 
             if temp_src_type == "Eigenmode":
@@ -413,6 +705,8 @@ def src_cfg(old_cfg=None, edit_idx=None):
             elif temp_src_type == "Custom":
                 new_source = Source(
                     **base_kwargs,
+                    amp_func=st.session_state.get('t_src_amp_func') if temp_amp_set == "function" else None,
+                    amp_func_file=upload_file,
                     component=st.session_state.get('t_src_comp_custom'),
                 )
 
@@ -479,19 +773,22 @@ def src_cfg(old_cfg=None, edit_idx=None):
         temp_src_size[2] = z1.number_input("Size", label_visibility='hidden', placeholder="Z", value=default_size[2], key='t_src_size_z')
         with st.expander("Amplitude parameters"):
             temp_src_amp = st.text_input("Amplitude", placeholder="1.0", key='t_src_amp',value=default_amp)
-            if st.checkbox("More advanced amplitude", key='t_src_amp_adv',value=default_amp_adv):
-                amp_type_list = ["function", "file"]
-                temp_src_amp_set = st.radio("Defined by", amp_type_list, horizontal=True, label_visibility='collapsed',key='t_src_amp_set', index=amp_type_list.index(default_amp_set) if default_amp_set is not None else None)
-                if temp_src_amp_set == "function":
-                    st.text_area("Amplitude function", placeholder="e.g. exp(-t**2)", key='t_src_amp_func', value=default_amp_func)
-                if temp_src_amp_set == "file":
-                    temp_src_amp_func_file = st.file_uploader("Upload file", type=['h5', 'hdf5','npy'], key='t_src_amp_func_file', accept_multiple_files=False)
-                    if temp_src_amp_func_file is not None:
-                        st.success(f"Uploaded file: {temp_src_amp_func_file.name}")
-                    elif default_amp_func_file is not None:
-                        st.success(f"Previously uploaded file: {default_amp_func_file.name}")
-                    else:
-                        st.info("No amplitude function file uploaded.")
+            if st.session_states.get('t_src_type') == 'Custom':
+                if st.checkbox("More advanced amplitude", key='t_src_amp_adv',value=default_amp_adv):
+                    amp_type_list = ["function", "file"]
+                    temp_src_amp_set = st.radio("Defined by", amp_type_list, horizontal=True, label_visibility='collapsed',key='t_src_amp_set', index=amp_type_list.index(default_amp_set) if default_amp_set is not None else None)
+                    if temp_src_amp_set == "function":
+                        st.text_area("Amplitude function", placeholder="e.g. exp(-t**2)", key='t_src_amp_func', value=default_amp_func)
+                    if temp_src_amp_set == "file":
+                        temp_src_amp_func_file = st.file_uploader("Upload file", type=['h5', 'hdf5','npy'], key='t_src_amp_func_file', accept_multiple_files=False)
+                        if temp_src_amp_func_file is not None:
+                            st.success(f"Uploaded file: {temp_src_amp_func_file.name}")
+                        elif default_amp_func_file is not None:
+                            st.success(f"Previously uploaded file: {default_amp_func_file.name}")
+                        else:
+                            st.info("No amplitude function file uploaded.")
+            else:
+                st.info('In-bulit amplitude function from source type.')
                     
 
 
@@ -504,7 +801,7 @@ def src_cfg(old_cfg=None, edit_idx=None):
             temp_src_comp = st.selectbox("Component", custom_comp_options, key='t_src_comp_custom',index=custom_comp_options.index(default_src_custom_comp) if default_src_custom_comp is not None else None)
         if st.session_state.get('t_src_type') == "Eigenmode":
             eig_comp_options = ['All', "Ex", "Ey", "Ez", "Hx", "Hy", "Hz"]
-            temp_src_comp = st.selectbox("Component", eig_comp_options, key='t_src_comp_eig',index=eig_comp_options.index(default_src_eig_comp) if default_src_eig_comp is not None else None)
+            temp_src_comp = st.selectbox("Component", eig_comp_options, key='t_src_comp_eig',index=eig_comp_options.index(default_src_eig_comp) if default_src_eig_comp is not 'All' else 'All',disabled=True)
             temp_eig_band = st.number_input('Eigenband index', min_value=1, step=1, placeholder='The index of n of the desided band.', key='t_src_eig_band',value=default_src_eig_band)
             temp_eig_res = st.number_input('Eigenmode solver resolution', placeholder='Resolution for the eigenmode solver', key='t_src_eig_res',value=default_src_eig_res)
             temp_eig_tol = st.number_input('Eigenmode solver tolerance', placeholder='Tolerance for the eigenmode solver.', key='t_src_eig_tol',value=default_src_eig_tol)
@@ -531,7 +828,7 @@ def src_cfg(old_cfg=None, edit_idx=None):
                 temp_eig_kpt[2] = z.number_input("k-point", label_visibility='hidden', placeholder="kz", key='t_src_eig_kptz', value=default_src_eig_kpt[2])
         if st.session_state.get('t_src_type') == "Gaussian":
             gau_comp_options = ['All', "Ex", "Ey", "Ez", "Hx", "Hy", "Hz"]
-            temp_src_comp = st.selectbox("Component", gau_comp_options, index=gau_comp_options.index(default_src_gau_comp) if default_src_gau_comp is not None else None, key='t_src_comp_gau')
+            temp_src_comp = st.selectbox("Component", gau_comp_options, index=gau_comp_options.index(default_src_gau_comp) if default_src_gau_comp is not 'All' else 'All', key='t_src_comp_gau',disabled=True)
             temp_gau_w0 = st.number_input("Beam waist w0", key='t_src_gau_w0', value=default_src_gau_w0)
             temp_gau_x0 = [None] * 3
             temp_gau_kdir = [None] * 3

@@ -3,12 +3,14 @@ import requests
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import math
+import cmath
 import base64
 from geo_config import (
     _validate_geom, geo_cfg, get_mesh, geo_trace_checker,
     BasicGeometry, Block, Ellipsoid, Sphere, Cylinder, Cone, Wedge, Prism
 )
-from src_config import src_cfg
+from src_config import src_cfg, src_trace_checker, Source, GaussianSource, Gaussian_srct
 from utils import clear_temp, card_widget
 
 
@@ -81,6 +83,67 @@ if st.session_state.dialog_toast_msg:
     txt, icon, dur = st.session_state.dialog_toast_msg
     st.toast(txt, icon=icon, duration=dur)
     st.session_state.dialog_toast_msg = None
+
+# 初始化测试数据（仅执行一次）
+if not st.session_state.sources:
+    # 定义一个符合 Meep 规范的测试 amp_func (平面波)
+    k_vec = np.array([1.0, 1.0, 1.0]) # 波矢方向
+    def test_pw_amp(x):
+        # x 是相对于光源中心 (center) 的坐标
+        # 模拟强度随中心向边缘衰减 (Gaussian) + 线性相位
+        r_sq = np.sum(x**2)
+        intensity = math.exp(-r_sq / 10.0) 
+        phase = np.dot(k_vec, x)
+        return intensity * cmath.exp(1j * phase)
+
+    st.session_state.sources.append(
+        Source(
+            name='test_pol',
+            color='yellow',
+            srct=None,
+            component='Ex',
+            opacity=0.5,
+            center=[0, 0, 0],
+            size=[5, 5, 0],
+            amplitude=1.0,
+            amp_func=test_pw_amp,
+            amp_func_file=None,
+        )
+    )
+
+    # 添加测试 Gaussian Source
+    st.session_state.sources.append(
+        GaussianSource(
+            name='test_gaussian_beam',
+            color='#00FF88',
+            srct=Gaussian_srct(wavelength=1.0, fwidth=0.2),
+            opacity=0.4,
+            center=[0, 0, 2],
+            size=[0, 6, 6],  # 位于 Y-Z 平面的面光源
+            beam_x0=[0, 0, 0],       # 焦点在原点
+            beam_kdir=[1, 1, 0], # 斜向传播
+            beam_w0=0.2,             # 腰径
+            beam_E0=[0, 1, 1],       # 偏振沿 Z
+            amplitude=1.0,
+        )
+    )
+
+    # 添加第二个测试 Gaussian Source，验证 beam_x0 相对位移和 k-dir
+    st.session_state.sources.append(
+        GaussianSource(
+            name='test_gaussian_offset',
+            color='#FF00FF',
+            srct=Gaussian_srct(wavelength=1.5, fwidth=0.1),
+            opacity=0.4,
+            center=[5, 0, 0],
+            size=[0, 4, 4],           # 位于 X=5 的 Y-Z 平面
+            beam_x0=[-2, 0, 0],       # 焦点相对于 center 偏移，即在 (3, 0, 0)
+            beam_kdir=[1, 0.5, 0],    # 斜向传播
+            beam_w0=0.5,
+            beam_E0=[0, 0, 1],
+            amplitude=1.5,
+        )
+    )
 
 
 
@@ -161,6 +224,14 @@ with tab_view:
             fig.add_traces(traces)
         else:
             fig.add_trace(traces)
+
+    # 绘制光源
+    for source in st.session_state.sources:
+        src_traces = src_trace_checker(source)
+        if isinstance(src_traces, list):
+            fig.add_traces(src_traces)
+        else:
+            fig.add_trace(src_traces)
 
     fig.update_layout(
         scene=dict(

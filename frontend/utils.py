@@ -96,8 +96,8 @@ def card_widget(obj, obj_type, idx, edit_callback=None, top=False, bottom=False)
                 st.write("No details available.")
 
 
-        # Opacity slider for geometry
-        if obj_type == 'geometry':
+        # Opacity slider for geometry and source
+        if obj_type in ['geometry', 'source']:
             opacity = st.slider(
                 "Opacity", 
                 min_value=0.0, 
