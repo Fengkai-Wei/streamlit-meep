@@ -48,24 +48,25 @@ def card_widget(obj, obj_type, idx, edit_callback=None, top=False, bottom=False)
         main_rows.append(["Type", type(obj).__name__])
         
         # Skip these attributes based on object type
-        skip_attrs = {'uid', 'name', 'color','opacity','volume'}
+        skip_attrs = {'uid', 'name', 'color','opacity','volume','srct'}
         
         for attr, value in obj.__dict__.items():         
             if attr in skip_attrs:
                 continue
+            display_value = str(value)  # 转换为字符串以确保 Arrow 兼容性
             if obj_type == 'geometry':
                 geo_main_attr = {'material','center'}
                 if attr in geo_main_attr:                 
-                    main_rows.append([attr, value])
+                    main_rows.append([attr, display_value])
                 else:
-                    sub_rows.append([attr, value])
+                    sub_rows.append([attr, display_value])
 
             if obj_type == 'source':
                 src_main_attr = {'center','size','amplitude','amp_func','amp_func_file'}
                 if attr in src_main_attr:
-                    main_rows.append([attr, value])
+                    main_rows.append([attr, display_value])
                 else:
-                    sub_rows.append([attr, value])
+                    sub_rows.append([attr, display_value])
         
         with st.expander("Main details",expanded=True):
             if main_rows:
@@ -80,14 +81,10 @@ def card_widget(obj, obj_type, idx, edit_callback=None, top=False, bottom=False)
                 srct_rows = []
                 srct_rows.append(["Type", srct_type])
                 for attr, value in srct.__dict__.items():
-                    srct_rows.append([attr, value])
+                    srct_rows.append([attr, str(value)])
                 df_srct = pd.DataFrame(srct_rows, columns=["attribute", "value"])
                 st.table(df_srct)
 
-
-
-
-                
         with st.expander("Sub details"):
             if sub_rows:
                 df_sub = pd.DataFrame(sub_rows, columns=["attribute", "value"])
@@ -96,18 +93,12 @@ def card_widget(obj, obj_type, idx, edit_callback=None, top=False, bottom=False)
                 st.write("No details available.")
 
 
-        # Opacity slider for geometry and source
+        # Color configuration for geometry and source
         if obj_type in ['geometry', 'source']:
-            opacity = st.slider(
-                "Opacity", 
-                min_value=0.0, 
-                max_value=1.0, 
-                value=getattr(obj, "opacity", 1.0), 
-                step=0.05, 
-                key=f"{key_prefix}_opacity"
-            )
-            if opacity != obj.opacity:
-                obj.opacity = opacity
+            # Color Picker
+            new_color = st.color_picker("Color", value=obj.color, key=f"{key_prefix}_color")
+            if new_color != obj.color:
+                obj.color = new_color
                 if obj_type == 'geometry':
                     st.session_state.geoms[idx] = obj
                 elif obj_type == 'source':

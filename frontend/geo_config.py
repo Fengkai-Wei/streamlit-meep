@@ -679,7 +679,7 @@ def geo_cfg(old_cfg=None, edit_idx=None):
                     st.session_state.geoms[edit_idx] = new_geom
                 else:
                     st.session_state.geoms.append(new_geom)               
-                st.session_state.dialog_toast_msg = (f"**Geometry {new_geom.name} added.**", "✔️",'default')
+                st.session_state.dialog_toast_msg = (f"**Geometry {new_geom.name} added.**", "✔️",'short')
                 clear_temp()
                 st.rerun()
             else:

@@ -10,7 +10,10 @@ from geo_config import (
     _validate_geom, geo_cfg, get_mesh, geo_trace_checker,
     BasicGeometry, Block, Ellipsoid, Sphere, Cylinder, Cone, Wedge, Prism
 )
-from src_config import src_cfg, src_trace_checker, Source, GaussianSource, Gaussian_srct
+from src_config import (
+    src_cfg, src_trace_checker, Source, GaussianSource, 
+    Gaussian_srct, EigenmodeSource
+)
 from utils import clear_temp, card_widget
 
 
@@ -86,64 +89,68 @@ if st.session_state.dialog_toast_msg:
 
 # 初始化测试数据（仅执行一次）
 if not st.session_state.sources:
+    pass
     # 定义一个符合 Meep 规范的测试 amp_func (平面波)
-    k_vec = np.array([1.0, 1.0, 1.0]) # 波矢方向
-    def test_pw_amp(x):
-        # x 是相对于光源中心 (center) 的坐标
-        # 模拟强度随中心向边缘衰减 (Gaussian) + 线性相位
-        r_sq = np.sum(x**2)
-        intensity = math.exp(-r_sq / 10.0) 
-        phase = np.dot(k_vec, x)
-        return intensity * cmath.exp(1j * phase)
+    # k_vec = np.array([1.0, 1.0, 1.0]) # 波矢方向
+    # def test_pw_amp(x):
+    #     # x 是相对于光源中心 (center) 的坐标
+    #     # 模拟强度随中心向边缘衰减 (Gaussian) + 线性相位
+    #     r_sq = np.sum(x**2)
+    #     intensity = math.exp(-r_sq / 10.0) 
+    #     phase = np.dot(k_vec, x)
+    #     return intensity * cmath.exp(1j * phase)
 
-    st.session_state.sources.append(
-        Source(
-            name='test_pol',
-            color='yellow',
-            srct=None,
-            component='Ex',
-            opacity=0.5,
-            center=[0, 0, 0],
-            size=[5, 5, 0],
-            amplitude=1.0,
-            amp_func=test_pw_amp,
-            amp_func_file=None,
-        )
-    )
+    # st.session_state.sources.append(
+    #     Source(
+    #         name='test_pol',
+    #         srct=Gaussian_srct(wavelength=1.55, fwidth=0.1),
+    #         color='yellow',
+    #         component='Ex',
+    #         opacity=0.5,
+    #         center=[0, 0, 0],
+    #         size=[5, 5, 0],
+    #         amplitude=1.0,
+    #         amp_func=test_pw_amp,
+    #         amp_func_file=None,
+    #     )
+    # )
 
-    # 添加测试 Gaussian Source
-    st.session_state.sources.append(
-        GaussianSource(
-            name='test_gaussian_beam',
-            color='#00FF88',
-            srct=Gaussian_srct(wavelength=1.0, fwidth=0.2),
-            opacity=0.4,
-            center=[0, 0, 2],
-            size=[0, 6, 6],  # 位于 Y-Z 平面的面光源
-            beam_x0=[0, 0, 0],       # 焦点在原点
-            beam_kdir=[1, 1, 0], # 斜向传播
-            beam_w0=0.2,             # 腰径
-            beam_E0=[0, 1, 1],       # 偏振沿 Z
-            amplitude=1.0,
-        )
-    )
+    # # 添加测试 Eigenmode Source
+    # st.session_state.sources.append(
+    #     EigenmodeSource(
+    #         name='test_eigenmode',
+    #         color='#66CCFF',
+    #         srct=Gaussian_srct(wavelength=1.55, fwidth=0.1),
+    #         component='All',
+    #         opacity=0.6,
+    #         center=[2, 0, 0],
+    #         size=[0, 3, 3],
+    #         direction='X',
+    #         eig_band=1,
+    #         eig_kpoint=[1, 1, 0],
+    #         eig_lattice_size=[0, 5, 5],
+    #         eig_lattice_center=[2, 0, 0],
+    #         amplitude=1.0,
+    #     )
+    # )
+    # # 添加测试 Gaussian Source
+    # st.session_state.sources.append(
+    #     GaussianSource(
+    #         name='test_gaussian_beam',
+    #         color='#00FF88',
+    #         srct=Gaussian_srct(wavelength=1.0, fwidth=0.2),
+    #         opacity=0.4,
+    #         center=[0, 0, 2],
+    #         size=[0, 6, 6],  # 位于 Y-Z 平面的面光源
+    #         beam_x0=[0, 0, 0],       # 焦点在原点
+    #         beam_kdir=[1, 1, 0], # 斜向传播
+    #         beam_w0=0.2,             # 腰径
+    #         beam_E0=[0, 2, 2],       # 偏振沿 Z
+    #         amplitude=1.0,
+    #     )
+    # )
 
-    # 添加第二个测试 Gaussian Source，验证 beam_x0 相对位移和 k-dir
-    st.session_state.sources.append(
-        GaussianSource(
-            name='test_gaussian_offset',
-            color='#FF00FF',
-            srct=Gaussian_srct(wavelength=1.5, fwidth=0.1),
-            opacity=0.4,
-            center=[5, 0, 0],
-            size=[0, 4, 4],           # 位于 X=5 的 Y-Z 平面
-            beam_x0=[-2, 0, 0],       # 焦点相对于 center 偏移，即在 (3, 0, 0)
-            beam_kdir=[1, 0.5, 0],    # 斜向传播
-            beam_w0=0.5,
-            beam_E0=[0, 0, 1],
-            amplitude=1.5,
-        )
-    )
+
 
 
 
@@ -240,7 +247,8 @@ with tab_view:
             zaxis_title='Z (um)',
             aspectmode='data',
             camera=dict(
-                eye=dict(x=1.8, y=1.8, z=1.2)
+                eye=dict(x=1.8, y=1.8, z=1.2),
+                projection=dict(type='orthographic')
             )
         ),
         margin=dict(l=0, r=0, b=0, t=60),

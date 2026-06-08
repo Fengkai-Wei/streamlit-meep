@@ -26,7 +26,7 @@ def _get_common_source_traces(source):
     center = np.array([float(x) if x is not None else 0.0 for x in getattr(source, 'center', [0,0,0])])
     size = np.array([float(x) if x is not None else 0.0 for x in getattr(source, 'size', [0,0,0])])
     non_zero_thres = 1e-8
-    name = getattr(source, 'name', 'unkonwn')
+    name = getattr(source, 'name', 'unknown')
     color = getattr(source, 'color', 'yellow')
     opacity = getattr(source, 'opacity', 0.5)
     
@@ -38,7 +38,7 @@ def _get_common_source_traces(source):
         traces.append(go.Scatter3d(
             x=[center[0]], y=[center[1]], z=[center[2]],
             mode='markers',
-            marker=dict(size=5, color=color, symbol='diamond'),
+            marker=dict(size=12, color=color, symbol='circle'),
             opacity=opacity,
             name=name, showlegend=True
         ))
@@ -134,39 +134,189 @@ def _get_common_source_traces(source):
     return traces
 
 
-def _get_pol_vector_traces(source, vec, color='red', origin=None):
+def _get_direction_vector(source):
+    """私有辅助函数：根据 source.direction 或 size 平面自动获取法线向量。"""
+    # 显式检查 direction 属性，如果没有则默认为 'No'
+    dir_val = getattr(source, 'direction', 'No') or 'No'
+    name = getattr(source, 'name', 'unknown')
+
+    if dir_val == 'No' or dir_val not in ['X', 'Y', 'Z', 'Auto']:
+        return None
+    
+    if dir_val == 'Auto':
+        size = np.array([float(x) if x is not None else 0.0 for x in getattr(source, 'size', [0,0,0])])
+        zeros = np.where(size < 1e-8)[0]
+        v = np.zeros(3)
+        if len(zeros) > 0:
+            v[zeros[0]] = 1.0
+        else:
+            v[2] = 1.0
+        res_vec = v
+    else:
+        dir_map = {'X': [1,0,0], 'Y': [0,1,0], 'Z': [0,0,1]}
+        res_vec = np.array(dir_map.get(dir_val, [0,0,1]), dtype=float)
+
+    # 如果你想确认，取消下面一行的注释。你会看到不同光源的输出。
+    # print(f"DEBUG [{name}]: dir_vec is {res_vec}")
+    return res_vec
+
+
+def _get_pol_vector_traces(source, vec, color='red', origin=None, kdir=None):
     """私有辅助函数：绘制偏振方向矢量箭头。"""
     traces = []
+    name = getattr(source, 'name', 'unknown')
+
     if origin is None:
         origin = np.array([float(x) if x is not None else 0.0 for x in getattr(source, 'center', [0,0,0])])
-    non_zero_thres = 1e-8
-    name = getattr(source, 'name', 'unknown')
+    
+    # 获取归一化的传播方向用于并行检查
+    k_norm_check = None
+    if kdir is not None and np.linalg.norm(kdir) > 1e-8:
+        k_norm_check = kdir / np.linalg.norm(kdir)
+
     comp = getattr(source, 'component', 'Ex')
 
-    if np.linalg.norm(vec) > non_zero_thres:
-        vec_norm = (vec / np.linalg.norm(vec)) * 1.0
+    # 0. 绘制 Direction 辅助线段 (黑虚线双头箭头)
+    dir_vec = _get_direction_vector(source)
+
+    if dir_vec is not None:
+        is_parallel = False
+        if k_norm_check is not None:
+            # 使用较宽松的阈值 (0.99) 处理浮点数误差
+            is_parallel = np.abs(np.dot(dir_vec, k_norm_check)) > 0.99
+        
+        # 线段长度 1.5，中点在 origin
+        p0 = origin - 2/3 * dir_vec
+        p1 = origin + 2/3 * dir_vec
+        
+        # 绘制虚线
+
+        d_text = ["", f"<b>{name} dir</b>"] if not is_parallel else ["", ""]
+        traces.append(go.Scatter3d(
+            x=[p0[0], p1[0]], y=[p0[1], p1[1]], z=[p0[2], p1[2]],
+            mode='lines+text' if not is_parallel else 'lines',
+            line=dict(color='black', width=3, dash='dash'),
+            text=d_text,
+            textposition="top center",
+            textfont=dict(size=8, color='black', weight='bold'),
+            name=f"{name} Direction", showlegend=False
+        ))
+
+        # 绘制两端的箭头
+        for tip_p, tip_v in [(p1, dir_vec), (p0, -dir_vec)]:
+            traces.append(go.Cone(
+                x=[tip_p[0]], y=[tip_p[1]], z=[tip_p[2]],
+                u=[tip_v[0]], v=[tip_v[1]], w=[tip_v[2]],
+                sizemode="absolute", sizeref=0.2, anchor="tip",
+                showscale=False, colorscale=[[0, 'black'], [1, 'black']],
+                name="Direction Head", showlegend=False
+            ))
+
+
+    # 1. 颜色与长度映射
+    arrow_len = 1.0
+    if comp in ['Ex', 'Ey', 'Ez']:
+        color = 'orange'
+        arrow_len = 0.5
+    elif comp in ['Hx', 'Hy', 'Hz']:
+        color = 'blue'
+        arrow_len = 0.5
+
+    # 2. 检查相位螺旋 (针对复数向量，如 beam_E0)
+    v_numeric = np.array(vec, dtype=complex)
+    if np.any(np.abs(np.imag(v_numeric)) > 1e-8):
+        # 获取传播方向 k
+        k_vec = np.array([0, 0, 1])
+        if kdir is not None and np.linalg.norm(kdir) > 1e-8:
+            k_vec = np.array(kdir, dtype=float)
+        elif hasattr(source, 'beam_kdir'):
+            k_vec = np.array(source.beam_kdir, dtype=float)
+        elif hasattr(source, 'eig_kpoint'):
+            k_raw = np.array(source.eig_kpoint, dtype=float)
+            if np.linalg.norm(k_raw) > 1e-8: k_vec = k_raw
+            else:
+                d_map = {'X':[1,0,0],'Y':[0,1,0],'Z':[0,0,1]}
+                k_vec = np.array(d_map.get(getattr(source, 'direction', 'Z'), [0,0,1]))
+        
+        k_norm = k_vec / (np.linalg.norm(k_vec) + 1e-12)
+        
+        # 强制旋转轴为 kdir：通过投影确保极化矢量垂直于传播方向
+        v_trans = v_numeric - np.sum(v_numeric * k_norm) * k_norm
+        v_target = v_trans if np.linalg.norm(v_trans) > 1e-8 else v_numeric
+
+        # 采样生成螺旋线 (正弦螺线效果，展示 2 个周期，旋转轴与方向设为 kdir)
+        num_pts = 100
+        cycles = 2
+        t = np.linspace(0, 1, num_pts)
+        spiral_pts = []
+        for val_t in t:
+            # 旋转相位: exp(1j * ...)，使旋转轴和方向与 kdir 耦合
+            phi = 2 * np.pi * cycles * val_t
+            phase = np.exp(1j * phi)
+            offset = np.real(v_target * phase)
+            if np.linalg.norm(v_target) > 1e-8:
+                offset = (offset / np.linalg.norm(v_target)) * 0.3
+            spiral_pts.append(origin + val_t * arrow_len * k_norm + offset)
+        
+        spiral_pts = np.array(spiral_pts)
+        traces.append(go.Scatter3d(
+            x=spiral_pts[:, 0], y=spiral_pts[:, 1], z=spiral_pts[:, 2],
+            mode='lines', line=dict(color=color, width=5),
+            name=f"{name} phase spiral", showlegend=False
+        ))
+        # 末端箭头
+        tip = spiral_pts[-1]
+        v_tip = spiral_pts[-1] - spiral_pts[-2]
+        v_tip /= (np.linalg.norm(v_tip) + 1e-12)
+        traces.append(go.Cone(
+            x=[tip[0]], y=[tip[1]], z=[tip[2]],
+            u=[v_tip[0]], v=[v_tip[1]], w=[v_tip[2]],
+            sizemode="absolute", sizeref=0.15, anchor="tip",
+            showscale=False, colorscale=[[0, color], [1, color]],
+            name="Spiral Head", showlegend=False
+        ))
+        return traces
+
+    # 3. 'All' 情况：灰色球壳 (仅在非螺旋线时触发)
+    if comp == 'All':
+        r = 0.1
+        theta = np.linspace(0, 2*np.pi, 20)
+        phi = np.linspace(0, np.pi, 20)
+        THETA, PHI = np.meshgrid(theta, phi)
+        sp_x = origin[0] + r * np.sin(PHI) * np.cos(THETA)
+        sp_y = origin[1] + r * np.sin(PHI) * np.sin(THETA)
+        sp_z = origin[2] + r * np.cos(PHI)
+        traces.append(go.Surface(
+            x=sp_x, y=sp_y, z=sp_z,
+            colorscale=[[0, 'gray'], [1, 'gray']],
+            showscale=False, opacity=0.5,
+            name=f"{name} (All)", showlegend=False
+        ))
+        return traces
+
+    # 4. 普通实数矢量箭头
+    vec_real = np.real(v_numeric)
+    if np.linalg.norm(vec_real) > 1e-8:
+        vec_norm = (vec_real / np.linalg.norm(vec_real)) * arrow_len
         
         traces.append(go.Scatter3d(
             x=[origin[0], origin[0] + vec_norm[0]],
             y=[origin[1], origin[1] + vec_norm[1]],
             z=[origin[2], origin[2] + vec_norm[2]],
-            mode='lines',
+            mode='lines+text',
+            text=["", f"<b>{name} pol</b>"],
+            textposition="top center",
+            textfont=dict(size=14, color='black', weight='bold'),
             line=dict(width=5, color=color),
-            name=f"{name} Pol ({comp})",
-            showlegend=False
+            name=f"{name} Pol ({comp})", showlegend=False
         ))
 
         traces.append(go.Cone(
-            x=[origin[0] + vec_norm[0]],
-            y=[origin[1] + vec_norm[1]],
-            z=[origin[2] + vec_norm[2]],
+            x=[origin[0] + vec_norm[0]], y=[origin[1] + vec_norm[1]], z=[origin[2] + vec_norm[2]],
             u=[vec_norm[0]], v=[vec_norm[1]], w=[vec_norm[2]],
-            sizemode="absolute", sizeref=0.3,
-            anchor="tip",
-            showscale=False,
-            colorscale=[[0, color], [1, color]],
-            name="Polarization Head",
-            showlegend=False
+            sizemode="absolute", sizeref=0.3 * arrow_len, anchor="tip",
+            showscale=False, colorscale=[[0, color], [1, color]],
+            name="Polarization Head", showlegend=False
         ))
     return traces
 
@@ -191,18 +341,91 @@ def source_trace(source):
 
 def eigenmode_trace(source):
     """EigenmodeSource 轨迹计算。"""
-    # 目前 Eigenmode 的基础显示与 Source 一致
-    return source_trace(source)
+    # 1. 获取通用的几何轨迹 (Point/Line/Surface/Volume)
+    traces = _get_common_source_traces(source)
+    
+    center = np.array([float(x) if x is not None else 0.0 for x in getattr(source, 'center', [0,0,0])])
+    name = getattr(source, 'name', 'Eigenmode')
+
+    # 2. 绘制传播方向 (k-vector)
+    # 传播方向仅根据 eig_kpoint 绘制，不再回退到 direction
+    k_vec = np.array([float(x) if x is not None else 0.0 for x in getattr(source, 'eig_kpoint', [0,0,0])])
+    
+    if np.linalg.norm(k_vec) > 1e-8:
+        k_norm = k_vec / np.linalg.norm(k_vec)
+
+        # 检查是否与 solver direction 平行
+        dir_v = _get_direction_vector(source)
+        k_suffix = " (same dir)" if dir_v is not None and np.abs(np.dot(dir_v, k_norm)) > 1-1e-8 else ""
+
+        traces.append(go.Scatter3d(
+            x=[center[0], center[0] + k_norm[0]],
+            y=[center[1], center[1] + k_norm[1]],
+            z=[center[2], center[2] + k_norm[2]],
+            mode='lines+text',
+            text=["", f"<b>{name} k-dir</b>" + k_suffix],
+            textposition="top center",
+            textfont=dict(size=14, color='black', weight='bold'),
+            line=dict(width=5, color='blue'),
+            name=f"{name} k-dir",
+            showlegend=False
+        ))
+        traces.append(go.Cone(
+            x=[center[0] + k_norm[0]], y=[center[1] + k_norm[1]], z=[center[2] + k_norm[2]],
+            u=[k_norm[0]], v=[k_norm[1]], w=[k_norm[2]],
+            sizemode="absolute", sizeref=0.3, anchor="tip", showscale=False,
+            colorscale=[[0, 'blue'], [1, 'blue']],
+            name="k-dir Head", showlegend=False
+        ))
+
+    # 3. 绘制偏振方向 (Component)
+    comp = getattr(source, 'component', 'Ex')
+    comp_map = {'Ex':[1,0,0],'Ey':[0,1,0],'Ez':[0,0,1],'Hx':[1,0,0],'Hy':[0,1,0],'Hz':[0,0,1]}
+    if comp in comp_map:
+        traces += _get_pol_vector_traces(source, np.array(comp_map[comp], dtype=float), kdir=k_vec if np.linalg.norm(k_vec) > 1e-8 else None)
+    elif comp == 'All':
+        traces += _get_pol_vector_traces(source, np.array([0.0, 0.0, 0.0]), kdir=k_vec if np.linalg.norm(k_vec) > 1e-8 else None)
+
+
+    # 4. 可选：绘制 Eigenmode Lattice (计算网格范围)
+    lat_size = np.array([float(x) if x is not None else 0.0 for x in getattr(source, 'eig_lattice_size', [0,0,0])])
+    if np.any(lat_size > 1e-8):
+        # 如果没设置 lattice_center，默认跟随 source.center
+        lat_center = np.array([float(x) if x is not None else 0.0 for x in getattr(source, 'eig_lattice_center', center)])
+        
+        # 构建 12 条边的线框
+        x_r = [lat_center[0] - lat_size[0]/2, lat_center[0] + lat_size[0]/2]
+        y_r = [lat_center[1] - lat_size[1]/2, lat_center[1] + lat_size[1]/2]
+        z_r = [lat_center[2] - lat_size[2]/2, lat_center[2] + lat_size[2]/2]
+        
+        bx, by, bz = [], [], []
+        # 定义路径 (底面 -> 顶面 -> 立柱)
+        path = [(0,0,0),(1,0,0),(1,1,0),(0,1,0),(0,0,0),(0,0,1),(1,0,1),(1,1,1),(0,1,1),(0,0,1),None,(1,0,0),(1,0,1),None,(1,1,0),(1,1,1),None,(0,1,0),(0,1,1)]
+        for p in path:
+            if p is None: bx.append(None); by.append(None); bz.append(None)
+            else: bx.append(x_r[p[0]]); by.append(y_r[p[1]]); bz.append(z_r[p[2]])
+            
+        traces.append(go.Scatter3d(
+            x=bx, y=by, z=bz, mode='lines',
+            line=dict(color='gray', width=2, dash='dot'),
+            name=f"{name} Lattice", showlegend=False
+        ))
+
+    return traces
 
 
 def gaussian_trace(source):
     """GaussianSource 轨迹计算，特殊处理 'All' 分量的矢量显示。"""
-    traces = _get_common_source_traces(source)
+    #traces = _get_common_source_traces(source)
+    traces = []
     center = np.array([float(x) if x is not None else 0.0 for x in getattr(source, 'center', [0,0,0])])
     
     # 提前计算全局焦点坐标 (center + beam_x0)
     rel_x0 = np.array(getattr(source, 'beam_x0', [0,0,0]), dtype=float)
     global_x0 = center + rel_x0
+
+    # 提前定义 kdir，供 _get_pol_vector_traces 和后续外壳绘制使用，防止 NameError
+    kdir = np.array(getattr(source, 'beam_kdir', [0,0,0]), dtype=float)
 
     comp = getattr(source, 'component', 'All')
     vec = np.array([0.0, 0.0, 0.0])
@@ -211,14 +434,13 @@ def gaussian_trace(source):
     if comp in comp_map:
         vec = np.array(comp_map[comp], dtype=float)
     elif comp == 'All' and hasattr(source, 'beam_E0'):
-        vec = np.array([float(x) if x is not None else 0.0 for x in source.beam_E0])
+        vec = np.array([complex(x) if x is not None else 0.0j for x in source.beam_E0])
 
     # 将偏振矢量箭头起始点设在焦点的全局坐标处
-    traces += _get_pol_vector_traces(source, vec, origin=global_x0)
+    traces += _get_pol_vector_traces(source, vec, origin=global_x0, kdir=kdir if np.linalg.norm(kdir) > 1e-8 else None)
 
     # --- 新增：绘制 Gaussian Beam 3D 外壳 ---
     w0 = getattr(source, 'beam_w0', None)
-    kdir = np.array(getattr(source, 'beam_kdir', [0,0,0]), dtype=float)
     
     if w0 and np.linalg.norm(kdir) > 1e-8:
         # 获取波长 (从 srct 中提取，默认为 1.0)
@@ -263,12 +485,20 @@ def gaussian_trace(source):
 
         # 绘制 kdir 矢量箭头 (蓝色)，起点在 global_x0
         k_norm = kdir / np.linalg.norm(kdir)
+
+        # 检查是否与 solver direction 平行
+        dir_v = _get_direction_vector(source)
+        k_suffix = " (same dir)" if dir_v is not None and np.abs(np.dot(dir_v, k_norm)) > 0.999 else ""
+
         traces.append(go.Scatter3d(
             x=[global_x0[0], global_x0[0] + k_norm[0]],
             y=[global_x0[1], global_x0[1] + k_norm[1]],
             z=[global_x0[2], global_x0[2] + k_norm[2]],
-            mode='lines',
+            mode='lines+text',
             line=dict(width=5, color='blue'),
+            text=["", f"<b>{source.name} k-dir</b>" + k_suffix],
+            textposition="top center",
+            textfont=dict(size=14, color='black', weight='bold'),
             name=f"{source.name} k-dir",
             showlegend=False
         ))
@@ -291,7 +521,7 @@ def gaussian_trace(source):
             showscale=False,
             name=f"{source.name} Envelope",
             opacity=0.3,
-            showlegend=False
+            showlegend=True
         ))
 
     return traces
@@ -670,7 +900,7 @@ def src_cfg(old_cfg=None, edit_idx=None):
                     upload_file = default_amp_func_file
             base_kwargs = {
                 "name": st.session_state.get('t_src_name') if f" ({temp_src_type})" in st.session_state.get('t_src_name') else st.session_state.get('t_src_name') + f" ({temp_src_type})",
-                "color": "#FFFFFF",
+                "color": st.session_state.get('t_src_color') or default_color,
                 "srct": srct,
                 "opacity": OPACITY,
                 "center": np.array([st.session_state.get('t_src_center_x'), st.session_state.get('t_src_center_y'), st.session_state.get('t_src_center_z')]),
@@ -773,7 +1003,7 @@ def src_cfg(old_cfg=None, edit_idx=None):
         temp_src_size[2] = z1.number_input("Size", label_visibility='hidden', placeholder="Z", value=default_size[2], key='t_src_size_z')
         with st.expander("Amplitude parameters"):
             temp_src_amp = st.text_input("Amplitude", placeholder="1.0", key='t_src_amp',value=default_amp)
-            if st.session_states.get('t_src_type') == 'Custom':
+            if st.session_state.get('t_src_type') == 'Custom':
                 if st.checkbox("More advanced amplitude", key='t_src_amp_adv',value=default_amp_adv):
                     amp_type_list = ["function", "file"]
                     temp_src_amp_set = st.radio("Defined by", amp_type_list, horizontal=True, label_visibility='collapsed',key='t_src_amp_set', index=amp_type_list.index(default_amp_set) if default_amp_set is not None else None)
@@ -789,6 +1019,8 @@ def src_cfg(old_cfg=None, edit_idx=None):
                             st.info("No amplitude function file uploaded.")
             else:
                 st.info('In-bulit amplitude function from source type.')
+        
+        temp_src_color = st.color_picker("Pick a color", value=default_color or "#000000", key="t_src_color")
                     
 
 
@@ -801,7 +1033,7 @@ def src_cfg(old_cfg=None, edit_idx=None):
             temp_src_comp = st.selectbox("Component", custom_comp_options, key='t_src_comp_custom',index=custom_comp_options.index(default_src_custom_comp) if default_src_custom_comp is not None else None)
         if st.session_state.get('t_src_type') == "Eigenmode":
             eig_comp_options = ['All', "Ex", "Ey", "Ez", "Hx", "Hy", "Hz"]
-            temp_src_comp = st.selectbox("Component", eig_comp_options, key='t_src_comp_eig',index=eig_comp_options.index(default_src_eig_comp) if default_src_eig_comp is not 'All' else 'All',disabled=True)
+            temp_src_comp = st.selectbox("Component", eig_comp_options, key='t_src_comp_eig',index=eig_comp_options.index(default_src_eig_comp) if default_src_eig_comp != None else 0,disabled=True)
             temp_eig_band = st.number_input('Eigenband index', min_value=1, step=1, placeholder='The index of n of the desided band.', key='t_src_eig_band',value=default_src_eig_band)
             temp_eig_res = st.number_input('Eigenmode solver resolution', placeholder='Resolution for the eigenmode solver', key='t_src_eig_res',value=default_src_eig_res)
             temp_eig_tol = st.number_input('Eigenmode solver tolerance', placeholder='Tolerance for the eigenmode solver.', key='t_src_eig_tol',value=default_src_eig_tol)
@@ -818,7 +1050,7 @@ def src_cfg(old_cfg=None, edit_idx=None):
             with st.expander("Eigenmode parity"):
                 temp_eig_par = st.multiselect("Parity", ["No parity", "Even Z", "Odd Z", "Even Y", "ODD Y"], key='t_src_eig_parity', default=default_src_eig_parity)
             with st.expander("Direction, frequency and reciprocal for eigenmode"):
-                temp_eig_match_freq = st.checkbox("Match frequency", key='t_src_eig_match_freq', value=default_src_eig_match_freq)
+                temp_eig_match_freq = st.checkbox("Match frequency", key='t_src_eig_match_freq', value=default_src_eig_match_freq if default_src_eig_match_freq is not None else True)
                 eigen_dir_options = ["Auto", "X", "Y", "Z"]
                 temp_eig_dir = st.selectbox("Direction", eigen_dir_options, key='t_src_eig_dir', index=eigen_dir_options.index(default_src_eig_dir) if default_src_eig_dir is not None else None)
                 x, y, z = st.columns(3)
@@ -828,7 +1060,7 @@ def src_cfg(old_cfg=None, edit_idx=None):
                 temp_eig_kpt[2] = z.number_input("k-point", label_visibility='hidden', placeholder="kz", key='t_src_eig_kptz', value=default_src_eig_kpt[2])
         if st.session_state.get('t_src_type') == "Gaussian":
             gau_comp_options = ['All', "Ex", "Ey", "Ez", "Hx", "Hy", "Hz"]
-            temp_src_comp = st.selectbox("Component", gau_comp_options, index=gau_comp_options.index(default_src_gau_comp) if default_src_gau_comp is not 'All' else 'All', key='t_src_comp_gau',disabled=True)
+            temp_src_comp = st.selectbox("Component", gau_comp_options, index=gau_comp_options.index(default_src_gau_comp) if default_src_gau_comp != 'All' else 'All', key='t_src_comp_gau',disabled=True)
             temp_gau_w0 = st.number_input("Beam waist w0", key='t_src_gau_w0', value=default_src_gau_w0)
             temp_gau_x0 = [None] * 3
             temp_gau_kdir = [None] * 3
