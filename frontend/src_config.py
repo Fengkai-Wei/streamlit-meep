@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from utils import clear_temp
 
 
-OPACITY = 0.25
+OPACITY = 0.4
 
 
 def src_trace_checker(source):
@@ -445,10 +445,10 @@ def gaussian_trace(source):
     if w0 and np.linalg.norm(kdir) > 1e-8:
         # 获取波长 (从 srct 中提取，默认为 1.0)
         srct = getattr(source, 'srct', None)
-        wl = getattr(srct, 'wavelength', 1.0) or 1.0
+        freq = getattr(srct, 'frequency', 1.0) or 1.0
         
-        # 计算瑞利距离 zR = pi * w0^2 / lambda
-        zr = np.pi * (float(w0)**2) / wl
+        # 计算瑞利距离 zR = pi * w0^2 * freq
+        zr = np.pi * (float(w0)**2) * freq
         
         # 定义局部坐标系：z 为传播方向，采样范围设为 3 倍瑞利距离
         z_vals = np.linspace(-3 * zr, 3 * zr, 30)
@@ -727,8 +727,8 @@ def src_cfg(old_cfg=None, edit_idx=None):
     default_name = None
     # --- 2. Source-time related ---
     default_srt_func = None
-    default_srt_wl = None
-    default_srt_wl_width = 0.0
+    defualt_srt_freq = None
+    default_srt_temp_width = 0.0
     default_srt_fwidth = 0.0
     default_width_option = None
     default_srt_custom_cfreq = None
@@ -826,11 +826,11 @@ def src_cfg(old_cfg=None, edit_idx=None):
                 default_srt_custom_cfreq = getattr(srct, 'center_frequency', 0.0)
                 default_srt_custom_fwidth = getattr(srct, 'fwidth', 0.0)
             if hasattr(srct, 'wavelength'):
-                default_srt_wl = getattr(srct, 'wavelength')
+                defualt_srt_freq = getattr(srct, 'wavelength')
             elif hasattr(srct, 'frequency'):
-                default_srt_wl = 1.0/getattr(srct, 'frequency')
+                defualt_srt_freq = getattr(srct, 'frequency')
             if hasattr(srct, 'width'):
-                default_srt_wl_width = getattr(srct, 'width')
+                default_srt_temp_width = getattr(srct, 'width')
                 default_width_option = "Temporal"
             elif hasattr(srct, 'fwidth'):
                 default_srt_fwidth = getattr(srct, 'fwidth')
@@ -856,7 +856,7 @@ def src_cfg(old_cfg=None, edit_idx=None):
         else:
             if st.session_state.get('t_srt_wl_width_option') == "Temporal":
                 wid = {
-                        "width": st.session_state.get('t_srt_wl_width'),
+                        "width": st.session_state.get('t_srt_temp_width'),
                     }
             elif st.session_state.get('t_srt_wl_width_option') == "Frequency":
                 wid = {
@@ -878,7 +878,7 @@ def src_cfg(old_cfg=None, edit_idx=None):
                     start_time=st.session_state.get('t_srt_start', 0.0),
                     cutoff=st.session_state.get('t_srt_cutoff', 5.0),
                     is_integrated=st.session_state.get('t_srt_int', False),
-                    wavelength=st.session_state.get('t_srt_wl'),
+                    frequency=st.session_state.get('t_srt_freq'),
                 )
             elif temp_srt_type == "Continuous":
                 srct = CW_srct(
@@ -887,7 +887,7 @@ def src_cfg(old_cfg=None, edit_idx=None):
                     end_time=st.session_state.get('t_srt_end', 1e20),
                     cutoff=st.session_state.get('t_srt_cutoff', None),
                     slowness=st.session_state.get('t_srt_slowness', 3.0),
-                    wavelength=st.session_state.get('t_srt_wl'),
+                    frequency=st.session_state.get('t_srt_freq'),
                     is_integrated=st.session_state.get('t_srt_int', False),
                 )
 
@@ -956,10 +956,11 @@ def src_cfg(old_cfg=None, edit_idx=None):
     # --- 4. UI 布局 ---
     src_left, divider, src_right = st.columns([1, 0.1, 1])
     with src_left:
+        st.text_input("Name", placeholder="Source name", key='t_src_name', value=default_name)
         src_type_options = ["Custom", "Eigenmode", "Gaussian"]
         temp_src_type_select = st.selectbox("Source type", src_type_options, 
                                      index=src_type_options.index(default_src_type) if default_src_type is not None else None, key='t_src_type')
-        st.text_input("Name", placeholder="Source name", key='t_src_name', value=default_name)
+        
         
         with st.expander("Source-time config"):
 
@@ -968,11 +969,11 @@ def src_cfg(old_cfg=None, edit_idx=None):
                                      index=srt_type_options.index(default_srt_type) if default_srt_type is not None else None,
                                      key='t_srt_type', horizontal=True)
             if temp_srt_type_select != "Custom":
-                temp_srt_wl = st.number_input("Wavelength", placeholder="Wavelength of the source", key='t_srt_wl', value=default_srt_wl)
+                temp_srt_freq = st.number_input("Frequency", placeholder="Frequency of the source", key='t_srt_freq', value=defualt_srt_freq)
                 width_list = ["Temporal", "Frequency"]
-                width_option = st.radio("Wavelength width defined by", width_list, key='t_srt_wl_width_option', horizontal=True,index=width_list.index(default_width_option) if default_width_option is not None else None)
+                width_option = st.radio("Frequency width defined by", width_list, key='t_srt_wl_width_option', horizontal=True,index=width_list.index(default_width_option) if default_width_option is not None else None)
                 if width_option == "Temporal":
-                    temp_srt_width = st.number_input("Temporal width", placeholder="Temporal width", key='t_srt_wl_width', value=default_srt_wl_width)
+                    temp_srt_width = st.number_input("Temporal width", placeholder="Temporal width", key='t_srt_temp_width', value=default_srt_temp_width)
                 elif width_option == "Frequency":
                     temp_srt_width = st.number_input("Frequency width", placeholder="Frequency width", key='t_srt_fwidth',value=default_srt_fwidth)
             elif temp_srt_type_select == "Custom":
