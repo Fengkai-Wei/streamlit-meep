@@ -10,7 +10,7 @@ import uuid
 import plotly.graph_objects as go
 from scipy.spatial import distance
 from mat import MATERIAL_KEYS
-from utils import clear_temp, card_widget
+from utils import clear_temp, Serializable
 
 # ============================================================================
 # GEOMETRY CLASSES AND MESH GENERATION (from geo_mesh3d.py)
@@ -48,7 +48,7 @@ def grid_to_mesh3d(x, y, z, color, name, opacity=OPACITY, showlegend=False, lege
         flatshading=True
     )
 
-class BasicGeometry:
+class BasicGeometry(Serializable):
     def __init__(self, color, name, material, center, opacity=1.0):
         self.uid = uuid.uuid4().hex
         self.color = color

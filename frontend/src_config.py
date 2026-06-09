@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import uuid
 import plotly.graph_objects as go
-from utils import clear_temp
+from utils import clear_temp, Serializable
 
 
 OPACITY = 0.25
@@ -533,7 +533,7 @@ def gaussian_trace(source):
 
 
 
-class CW_srct:
+class CW_srct(Serializable):
     def __init__(
         self,
         frequency=None,
@@ -557,7 +557,7 @@ class CW_srct:
         self.wavelength = wavelength
         self.is_integrated = is_integrated
 
-class Gaussian_srct:
+class Gaussian_srct(Serializable):
     def __init__(
         self,
         frequency=None,
@@ -577,7 +577,7 @@ class Gaussian_srct:
         self.is_integrated = is_integrated
         self.wavelength = wavelength
 
-class Custom_srct:
+class Custom_srct(Serializable):
     def __init__(
         self,
         src_func,
@@ -597,7 +597,7 @@ class Custom_srct:
 
 
 
-class Source:
+class Source(Serializable):
     def __init__(
         self,
         name,

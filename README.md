@@ -12,7 +12,7 @@ This application provides an intuitive workspace to design, visualize, and analy
 - Interactive camera controls and orthographic/perspective projection toggle.
 
 ### 2. Geometry Management
-- Add and edit complex geometries: `Block`, `Sphere`, `Cylinder`, `Cone`, `Wedge`, and `Prism`.
+- Add and edit complex geometries: `Block`, `Sphere`, `Cylinder`, `Cone`, `Wedge`, and ~~`Prism`~~.
 - Validation logic to ensure non-degenerate physical shapes.
 
 ### 3. Source Configuration
@@ -40,7 +40,8 @@ This application provides an intuitive workspace to design, visualize, and analy
 
 ## 📂 Project Structure
 - `app.py`: Main entry point and UI layout.
-- `geo_config.py`: Logic for geometry creation and validation.
+- `geo_config.py`: Logic for geometry creation, visualization and validation.
 - `src_config.py`: Logic for electromagnetic source definition and visualization.
-- `geo_mesh3d.py` / `geo_surface.py`: Specialized 3D rendering engines for geometries.
+- `mnt_config.py`: Logic for monitor creation, visualization and validation
+- `geo_mesh3d.py` : Specialized 3D rendering engines for geometries.
 - `utils.py`: UI helper components and state management.
