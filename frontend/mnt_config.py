@@ -3,12 +3,12 @@ import numpy as np
 import pandas as pd
 import uuid
 import plotly.graph_objects as go
-from utils import clear_temp
+from utils import clear_temp,Serializable
 
 OPACITY = 0.25
 
 
-class MonitorLoader:
+class MonitorLoader(Serializable):
     def __init__(
         self,
         name,
@@ -134,7 +134,7 @@ class Near2FarLoader(MonitorLoader):
         self.nperiods = nperiods
         self.decimation_factor = decimation_factor
 
-class FluxRegion:
+class FluxRegion(Serializable):
     def __init__(
         self,
         center,
