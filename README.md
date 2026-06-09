@@ -4,6 +4,8 @@ A world-class, web-based graphical user interface for **MEEP** (MIT Electromagne
 
 This application provides an intuitive workspace to design, visualize, and analyze electromagnetic simulations in 3D without writing simulation scripts manually.
 
+A frontend is deployed on https://meep-app.streamlit.app/
+
 ## 🚀 Features
 
 ### 1. 3D Scene Visualization
