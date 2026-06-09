@@ -1,6 +1,23 @@
 import streamlit as st
 import pandas as pd
 
+FRONTEND_ONLY_ATTRS = {"name", "uid", "color", "opacity"}
+class Serializable:
+    def to_dict(self) -> dict:
+        backend_data = {}
+        for key, value in self.__dict__.items():
+            if key.startswith("_"):
+                continue
+            if key not in FRONTEND_ONLY_ATTRS:
+                if hasattr(value, "to_dict"):
+                    backend_data[key] = value.to_dict()
+                elif: isinstance(value, (list, tuple)):
+                    backend_data[key] = [item.to_dict() if hasattr(item, "to_dict") else item for item in value]
+                else:
+                    backend_data[key] = value
+        backend_data['type'] = type(self).__name__.lower()
+        return backend_data
+
 
 def clear_temp():
     pattern = ("temp_", "tg_","t_")
